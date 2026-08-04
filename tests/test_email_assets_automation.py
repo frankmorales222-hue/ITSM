@@ -77,6 +77,7 @@ def test_employee_and_asset_support_context(admin):
     employee=admin.get("/api/employees/1");assert employee.status_code==200 and employee.json()["assets"] and "open_tickets" in employee.json()
     asset=admin.get("/api/assets/1");assert asset.status_code==200 and asset.json()["history"] and asset.json()["employee"]["name"]
     summary=admin.get("/api/assets/summary").json();assert summary["total"]>=25 and summary["assigned"]>0
+    listed=admin.get("/api/assets?q=AST-10001").json();assert listed[0]["assigned_employee_email"]
     imported=admin.get("/api/assets?q=AP-LT-001").json()
     if imported: assert imported[0]["assetpilot_url"].endswith(f"id={imported[0]['source_id']}")
 

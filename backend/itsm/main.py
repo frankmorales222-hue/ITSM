@@ -56,6 +56,7 @@ def asset_dict(asset: Asset, detail=False):
             "status": asset.status, "condition": asset.condition,
             "assigned_employee_id": asset.assigned_employee_id,
             "assigned_employee": f"{asset.assigned_employee.first_name} {asset.assigned_employee.last_name}" if asset.assigned_employee else None,
+            "assigned_employee_email": asset.assigned_employee.work_email if asset.assigned_employee else None,
             "location": asset.location.name if asset.location else None,
             "department": asset.department.name if asset.department else None,
             "source": asset.source, "source_id": asset.source_id, "is_archived": asset.is_archived,
