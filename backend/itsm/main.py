@@ -16,6 +16,7 @@ from . import __version__
 from .assetpilot import assetpilot_preview, import_assetpilot
 from .assetpilot_runtime import assetpilot_healthy, ensure_assetpilot_running
 from .config import settings
+from .credential_store import clear_integration_secret, integration_secret_status, set_integration_secret
 from .database import Base, engine, get_db
 from .models import *
 from .schemas import *
@@ -46,7 +47,9 @@ def user_dict(user: User):
     return {"id": user.id, "username": user.username, "email": user.email, "display_name": user.display_name,
             "role": user.role.value, "active": user.active, "must_change_password": user.must_change_password,
             "availability": user.availability, "team_id": user.team_id, "team": user.team.name if user.team else None,
-            "last_login_at": user.last_login_at}
+            "last_login_at": user.last_login_at, "organization_id": user.organization_id,
+            "ringcentral_extension_id": user.ringcentral_extension_id,
+            "ringcentral_extension_number": user.ringcentral_extension_number}
 
 
 def asset_dict(asset: Asset, detail=False):
@@ -117,6 +120,7 @@ def login(payload: LoginIn, request: Request, response: Response, db: Session = 
               new={"identifier": identifier, "reason": "unknown account"})
         db.commit(); time.sleep(.15)
         raise HTTPException(401, "Invalid username or password")
+    db.info["organization_id"] = user.organization_id
     locked = user.locked_until and user.locked_until.replace(tzinfo=user.locked_until.tzinfo or timezone.utc) > now()
     if locked or not user.active:
         audit(db, "login.failed", "user", user.id, source_ip=request.client.host if request.client else None,
@@ -175,7 +179,9 @@ def bootstrap(user: User = Depends(current_user), db: Session = Depends(get_db))
     routing_config = db.scalar(select(ConfigItem).where(ConfigItem.section == "assignment"))
     team_config = db.scalar(select(ConfigItem).where(ConfigItem.section == "teams"))
     routing_method = ((routing_config.value or {}).get("method") if routing_config else None) or ((team_config.value or {}).get("routing_mode") if team_config else None) or "least_active"
-    return {"user": user_dict(user), "teams": [{"id": t.id, "name": t.name, "queue": t.queue_name} for t in teams],
+    organization = db.get(Organization, user.organization_id)
+    return {"user": user_dict(user), "organization": {"id": organization.id, "name": organization.name, "timezone": organization.timezone, "logo_url": organization.logo_url} if organization else None,
+            "teams": [{"id": t.id, "name": t.name, "queue": t.queue_name} for t in teams],
             "technicians": [user_dict(t) for t in techs],
             "requesters": [{"id": r.id, "display_name": r.display_name, "email": r.email, "role": r.role.value} for r in requesters],
             "routing_method": routing_method,
@@ -281,6 +287,10 @@ def update_ticket(ticket_id: int, payload: TicketUpdate, user: User = Depends(re
         except ValueError: raise HTTPException(422, "Invalid status")
     if "priority" in changes and changes["priority"] != ticket.priority and not changes.get("priority_override_reason"):
         raise HTTPException(422, "A reason is required for a manual priority override")
+    if changes.get("assigned_user_id") is not None and not db.get(User, changes["assigned_user_id"]):
+        raise HTTPException(422, "Assigned technician is not in this organization")
+    if changes.get("team_id") is not None and not db.get(Team, changes["team_id"]):
+        raise HTTPException(422, "Team is not in this organization")
     for field, value in changes.items():
         old = getattr(ticket, field); previous[field] = old.value if isinstance(old, enum.Enum) else old
         setattr(ticket, field, value)
@@ -339,6 +349,8 @@ def reopen(ticket_id: int, user: User = Depends(current_user), db: Session = Dep
 
 @app.post("/api/tickets/bulk")
 def bulk_update(payload: BulkUpdate, user: User = Depends(require_roles(*STAFF_ROLES)), db: Session = Depends(get_db)):
+    if payload.assigned_user_id is not None and not db.get(User, payload.assigned_user_id):
+        raise HTTPException(422, "Assigned technician is not in this organization")
     changed = 0
     for ticket in db.scalars(select(Ticket).where(Ticket.id.in_(payload.ticket_ids))).all():
         if not can_view_ticket(user, ticket): continue
@@ -459,6 +471,9 @@ def asset_detail(asset_id: int, user: User = Depends(require_roles(*STAFF_ROLES,
 
 @app.post("/api/assets", status_code=201)
 def create_asset(payload: AssetCreate, user: User = Depends(require_roles(Role.ADMIN, Role.MANAGER)), db: Session = Depends(get_db)):
+    if payload.assigned_employee_id is not None and not db.get(Employee, payload.assigned_employee_id): raise HTTPException(422, "Employee is not in this organization")
+    if payload.location_id is not None and not db.get(Location, payload.location_id): raise HTTPException(422, "Location is not in this organization")
+    if payload.department_id is not None and not db.get(Department, payload.department_id): raise HTTPException(422, "Department is not in this organization")
     asset = Asset(**payload.model_dump()); db.add(asset)
     try: db.flush()
     except IntegrityError: db.rollback(); raise HTTPException(409, "Asset tag, hostname, and serial number must be unique when provided")
@@ -471,6 +486,8 @@ def update_asset(asset_id: int, payload: AssetUpdate, user: User = Depends(requi
     asset = db.get(Asset, asset_id)
     if not asset: raise HTTPException(404, "Asset not found")
     changes = payload.model_dump(exclude_unset=True); previous = {key: getattr(asset, key) for key in changes}
+    if changes.get("location_id") is not None and not db.get(Location, changes["location_id"]): raise HTTPException(422, "Location is not in this organization")
+    if changes.get("department_id") is not None and not db.get(Department, changes["department_id"]): raise HTTPException(422, "Department is not in this organization")
     for key,value in changes.items(): setattr(asset, key, value)
     try: db.flush()
     except IntegrityError: db.rollback(); raise HTTPException(409, "Asset tag, hostname, and serial number must be unique when provided")
@@ -527,8 +544,10 @@ def users(user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends
 def create_user(payload: UserCreate, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
     errors = validate_password(payload.temporary_password)
     if errors: raise HTTPException(422, errors)
+    if payload.team_id is not None and not db.get(Team, payload.team_id): raise HTTPException(422, "Team is not in this organization")
     account = User(username=payload.username.lower(), email=payload.email.lower(), display_name=payload.display_name,
-                   role=Role(payload.role), team_id=payload.team_id, password_hash=hash_password(payload.temporary_password), must_change_password=True)
+                   role=Role(payload.role), team_id=payload.team_id, password_hash=hash_password(payload.temporary_password), must_change_password=True,
+                   ringcentral_extension_number=payload.ringcentral_extension_number)
     db.add(account)
     try: db.flush()
     except IntegrityError: db.rollback(); raise HTTPException(409, "Username or email already exists")
@@ -551,11 +570,57 @@ def update_user(user_id: int, payload: UserUpdate, user: User = Depends(require_
     account = db.get(User, user_id)
     if not account: raise HTTPException(404, "User not found")
     changes = payload.model_dump(exclude_none=True); previous = {}
+    if changes.get("team_id") is not None and not db.get(Team, changes["team_id"]): raise HTTPException(422, "Team is not in this organization")
     if "role" in changes: changes["role"] = Role(changes["role"])
     for field,value in changes.items():
         old = getattr(account, field); previous[field] = old.value if isinstance(old, enum.Enum) else old; setattr(account, field, value)
     audit(db, "user.updated", "user", account.id, user.id, previous, {k: str(v) for k,v in changes.items()}); db.commit()
     return user_dict(account)
+
+
+@app.get("/api/admin/organization")
+def get_organization(user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    organization = db.get(Organization, user.organization_id)
+    if not organization: raise HTTPException(404, "Organization not found")
+    return {"id": organization.id, "name": organization.name, "slug": organization.slug,
+            "timezone": organization.timezone, "support_email": organization.support_email,
+            "support_phone": organization.support_phone, "logo_url": organization.logo_url,
+            "active": organization.active}
+
+
+@app.patch("/api/admin/organization")
+def update_organization(payload: OrganizationUpdate, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    organization = db.get(Organization, user.organization_id)
+    if not organization: raise HTTPException(404, "Organization not found")
+    previous = {key: getattr(organization, key) for key in type(payload).model_fields}
+    for key, value in payload.model_dump().items(): setattr(organization, key, value)
+    audit(db, "organization.updated", "organization", organization.id, user.id, previous, payload.model_dump())
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/admin/integrations/ringcentral/secrets")
+def ringcentral_secret_status(user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    present = integration_secret_status(db, "ringcentral")
+    config = db.scalar(select(ConfigItem).where(ConfigItem.section == "ringcentral"))
+    client_id = bool((config.value or {}).get("client_id")) if config else False
+    return {"client_id": client_id, "client_secret": present.get("client_secret", False),
+            "jwt_credential": present.get("jwt_credential", False),
+            "connection_status": "Ready to connect" if client_id and present.get("client_secret") and present.get("jwt_credential") else "Credentials incomplete"}
+
+
+@app.patch("/api/admin/integrations/ringcentral/secrets")
+def update_ringcentral_secrets(payload: IntegrationSecretsUpdate, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    allowed = {"client_secret", "jwt_credential"}
+    for name in payload.clear:
+        if name in allowed: clear_integration_secret(db, "ringcentral", name)
+    for name in allowed:
+        value = getattr(payload, name)
+        if value: set_integration_secret(db, "ringcentral", name, value)
+    audit(db, "integration.credentials_changed", "integration", "ringcentral", user.id,
+          new={"updated": [name for name in allowed if getattr(payload, name)], "cleared": [name for name in payload.clear if name in allowed]})
+    db.commit()
+    return ringcentral_secret_status(user, db)
 
 
 @app.get("/api/admin/settings/{section}")

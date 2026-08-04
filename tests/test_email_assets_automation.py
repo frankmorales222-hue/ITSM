@@ -1,6 +1,6 @@
 from conftest import login_as
 from itsm.database import SessionLocal
-from itsm.models import Asset, AssetHistory, AutomationFailure, EmailMessage, Notification, Ticket, User
+from itsm.models import Asset, AssetHistory, AutomationFailure, EmailMessage, IntegrationSecret, Notification, Organization, Ticket, User
 from sqlalchemy import func, select
 
 
@@ -104,3 +104,22 @@ def test_admin_updates_user_availability(admin):
     users=admin.get("/api/admin/users").json();tech=next(u for u in users if u["username"]=="tech2")
     changed=admin.patch(f"/api/admin/users/{tech['id']}",json={"availability":"Busy"});assert changed.status_code==200 and changed.json()["availability"]=="Busy"
     restored=admin.patch(f"/api/admin/users/{tech['id']}",json={"availability":"Available"});assert restored.json()["availability"]=="Available"
+
+
+def test_organization_isolation_and_ringcentral_configuration(admin):
+    organization=admin.get("/api/admin/organization").json();assert organization["name"]
+    updated={"name":"Northstar Test Organization","timezone":"America/New_York","support_email":"support@example.test","support_phone":"+15555550100","logo_url":""}
+    assert admin.patch("/api/admin/organization",json=updated).status_code==200
+    ringcentral=admin.get("/api/admin/settings/ringcentral").json();assert ringcentral and ringcentral[0]["value"]["enabled"] is False
+    secrets=admin.patch("/api/admin/integrations/ringcentral/secrets",json={"client_secret":"secret-value","jwt_credential":"jwt-value"})
+    assert secrets.status_code==200 and secrets.json()["client_secret"] and secrets.json()["jwt_credential"]
+    with SessionLocal() as db:
+        encrypted=db.scalar(select(IntegrationSecret.encrypted_value).where(IntegrationSecret.name=="client_secret"))
+        assert encrypted and "secret-value" not in encrypted
+        second=Organization(name="Second Organization",slug="second",timezone="America/New_York")
+        db.add(second);db.flush()
+        db.add(Asset(organization_id=second.id,asset_tag="SECOND-ORG-ASSET",manufacturer="Test",model="Test",asset_type="Laptop"));db.commit()
+    assert admin.get("/api/assets?q=SECOND-ORG-ASSET").json()==[]
+    assert admin.patch("/api/admin/integrations/ringcentral/secrets",json={"clear":["client_secret","jwt_credential"]}).status_code==200
+    restore={"name":organization["name"],"timezone":organization["timezone"],"support_email":organization["support_email"],"support_phone":organization["support_phone"],"logo_url":organization["logo_url"]}
+    assert admin.patch("/api/admin/organization",json=restore).status_code==200

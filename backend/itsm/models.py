@@ -1,7 +1,7 @@
 import enum
 from datetime import date, datetime, timezone
 from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 from .database import Base
 
 
@@ -35,28 +35,52 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
-class Department(Base):
+class OrganizationMixin:
+    """Marks records that must always be isolated to one organization."""
+    __tenant_scoped__ = True
+
+    @declared_attr
+    def organization_id(cls) -> Mapped[int]:
+        return mapped_column(ForeignKey("organizations.id"), nullable=False, index=True)
+
+
+class Organization(Base, TimestampMixin):
+    __tablename__ = "organizations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160))
+    slug: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    timezone: Mapped[str] = mapped_column(String(80), default="America/New_York")
+    support_email: Mapped[str] = mapped_column(String(255), default="")
+    support_phone: Mapped[str] = mapped_column(String(40), default="")
+    logo_url: Mapped[str] = mapped_column(String(500), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Department(OrganizationMixin, Base):
     __tablename__ = "departments"
+    __table_args__ = (UniqueConstraint("organization_id", "name"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
 
 
-class Location(Base):
+class Location(OrganizationMixin, Base):
     __tablename__ = "locations"
+    __table_args__ = (UniqueConstraint("organization_id", "name"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
 
 
-class Team(Base):
+class Team(OrganizationMixin, Base):
     __tablename__ = "teams"
+    __table_args__ = (UniqueConstraint("organization_id", "name"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
     queue_name: Mapped[str] = mapped_column(String(100))
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     skills: Mapped[list] = mapped_column(JSON, default=list)
 
 
-class User(Base, TimestampMixin):
+class User(OrganizationMixin, Base, TimestampMixin):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
@@ -71,17 +95,20 @@ class User(Base, TimestampMixin):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     availability: Mapped[str] = mapped_column(String(30), default="Available")
     team_id: Mapped[int | None] = mapped_column(ForeignKey("teams.id"), nullable=True)
+    ringcentral_extension_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    ringcentral_extension_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
     team: Mapped[Team | None] = relationship()
 
 
-class Employee(Base, TimestampMixin):
+class Employee(OrganizationMixin, Base, TimestampMixin):
     __tablename__ = "employees"
+    __table_args__ = (UniqueConstraint("organization_id", "employee_number"), UniqueConstraint("organization_id", "work_email"))
     id: Mapped[int] = mapped_column(primary_key=True)
-    employee_number: Mapped[str] = mapped_column(String(40), unique=True)
+    employee_number: Mapped[str] = mapped_column(String(40))
     first_name: Mapped[str] = mapped_column(String(80))
     last_name: Mapped[str] = mapped_column(String(80))
     preferred_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    work_email: Mapped[str] = mapped_column(String(255), unique=True)
+    work_email: Mapped[str] = mapped_column(String(255))
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"))
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"))
     manager_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
@@ -97,12 +124,13 @@ class Employee(Base, TimestampMixin):
     location: Mapped[Location | None] = relationship()
 
 
-class Asset(Base, TimestampMixin):
+class Asset(OrganizationMixin, Base, TimestampMixin):
     __tablename__ = "assets"
-    __table_args__ = (UniqueConstraint("hostname"), UniqueConstraint("serial_number"),
-                      Index("uq_assets_source_source_id", "source", "source_id", unique=True))
+    __table_args__ = (UniqueConstraint("organization_id", "asset_tag"),
+                      UniqueConstraint("organization_id", "hostname"), UniqueConstraint("organization_id", "serial_number"),
+                      Index("uq_assets_org_source_source_id", "organization_id", "source", "source_id", unique=True))
     id: Mapped[int] = mapped_column(primary_key=True)
-    asset_tag: Mapped[str] = mapped_column(String(60), unique=True, index=True)
+    asset_tag: Mapped[str] = mapped_column(String(60), index=True)
     hostname: Mapped[str | None] = mapped_column(String(120), nullable=True)
     serial_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
     manufacturer: Mapped[str] = mapped_column(String(80))
@@ -151,10 +179,11 @@ class Sequence(Base):
     value: Mapped[int] = mapped_column(Integer, default=0)
 
 
-class Ticket(Base, TimestampMixin):
+class Ticket(OrganizationMixin, Base, TimestampMixin):
     __tablename__ = "tickets"
+    __table_args__ = (UniqueConstraint("organization_id", "number"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    number: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    number: Mapped[str] = mapped_column(String(20), index=True)
     request_type: Mapped[str] = mapped_column(String(80))
     subject: Mapped[str] = mapped_column(String(240), index=True)
     description: Mapped[str] = mapped_column(Text)
@@ -234,7 +263,9 @@ class Session(Base):
 
 class AuditEvent(Base):
     __tablename__ = "audit_events"
+    __tenant_scoped__ = True
     id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True, index=True)
     actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     action: Mapped[str] = mapped_column(String(100), index=True)
     record_type: Mapped[str] = mapped_column(String(80), index=True)
@@ -246,10 +277,11 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
 
 
-class EmailMessage(Base):
+class EmailMessage(OrganizationMixin, Base):
     __tablename__ = "email_messages"
+    __table_args__ = (UniqueConstraint("organization_id", "message_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    message_id: Mapped[str] = mapped_column(String(500), unique=True, index=True)
+    message_id: Mapped[str] = mapped_column(String(500), index=True)
     in_reply_to: Mapped[str | None] = mapped_column(String(500), index=True)
     ticket_id: Mapped[int | None] = mapped_column(ForeignKey("tickets.id"))
     sender: Mapped[str] = mapped_column(String(255))
@@ -259,7 +291,7 @@ class EmailMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
-class Notification(Base):
+class Notification(OrganizationMixin, Base):
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
@@ -272,7 +304,7 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
-class AutomationFailure(Base):
+class AutomationFailure(OrganizationMixin, Base):
     __tablename__ = "automation_failures"
     id: Mapped[int] = mapped_column(primary_key=True)
     failure_type: Mapped[str] = mapped_column(String(100), index=True)
@@ -287,7 +319,7 @@ class AutomationFailure(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class Announcement(Base):
+class Announcement(OrganizationMixin, Base):
     __tablename__ = "announcements"
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(240))
@@ -297,7 +329,7 @@ class Announcement(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
-class Feedback(Base):
+class Feedback(OrganizationMixin, Base):
     __tablename__ = "feedback"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -317,13 +349,23 @@ class SystemState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
-class ConfigItem(Base):
+class ConfigItem(OrganizationMixin, Base):
     __tablename__ = "config_items"
-    __table_args__ = (UniqueConstraint("section", "name"),)
+    __table_args__ = (UniqueConstraint("organization_id", "section", "name"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     section: Mapped[str] = mapped_column(String(80), index=True)
     name: Mapped[str] = mapped_column(String(120))
     value: Mapped[dict] = mapped_column(JSON, default=dict)
     description: Mapped[str] = mapped_column(String(500), default="")
     sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class IntegrationSecret(OrganizationMixin, Base):
+    __tablename__ = "integration_secrets"
+    __table_args__ = (UniqueConstraint("organization_id", "provider", "name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(80), index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    encrypted_value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)

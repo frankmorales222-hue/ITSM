@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from .models import Asset, AssetHistory, Department, Employee, Location, User
+from .models import Asset, AssetHistory, Department, Employee, Location, Organization, User
 
 
 ASSET_CORE_COLUMNS = {
@@ -81,6 +81,11 @@ def _split_name(display_name: str) -> tuple[str, str]:
 
 
 def import_assetpilot(db: Session, path: Path | None = None, actor_id: int | None = None) -> dict:
+    if not db.info.get("organization_id"):
+        organization_id = db.scalar(select(Organization.id).order_by(Organization.id).limit(1))
+        if not organization_id:
+            raise RuntimeError("Create an organization before importing AssetPilot")
+        db.info["organization_id"] = organization_id
     source_path = path or default_assetpilot_path()
     connection = _connect(source_path)
     try:

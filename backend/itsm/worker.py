@@ -14,7 +14,7 @@ from email.policy import default
 import keyring
 from sqlalchemy import select
 from .database import SessionLocal
-from .models import EmailMessage, Notification, Role, SystemState, Ticket, TicketMessage, TicketStatus, User, now
+from .models import EmailMessage, Notification, Organization, Role, SystemState, Ticket, TicketMessage, TicketStatus, User, now
 from .services import audit, fail_automation, is_automated_email, next_ticket_number, notify, route_ticket, sla_dates
 
 
@@ -78,7 +78,9 @@ def sla_job(db):
 
 
 def run_once():
-    db=SessionLocal(); state=db.get(SystemState,"worker") or SystemState(key="worker",value={});db.add(state)
+    db=SessionLocal(); organization_id=db.scalar(select(Organization.id).where(Organization.active.is_(True)).order_by(Organization.id).limit(1))
+    if organization_id: db.info["organization_id"]=organization_id
+    state=db.get(SystemState,"worker") or SystemState(key="worker",value={});db.add(state)
     try:
         sla_job(db)
         host=os.getenv("ITSM_IMAP_HOST")
@@ -104,4 +106,3 @@ def main():
     while True: run_once();time.sleep(interval)
 
 if __name__=="__main__":main()
-

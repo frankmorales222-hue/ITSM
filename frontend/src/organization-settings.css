@@ -1,0 +1,10 @@
+.organization-settings,.integration-credentials{background:#fff;border:1px solid var(--line);border-radius:9px;padding:24px}
+.organization-settings footer,.integration-credentials footer{display:flex;justify-content:flex-end;align-items:center;gap:14px;border-top:1px solid var(--line);margin-top:22px;padding-top:16px}
+.organization-settings footer span,.integration-credentials footer span{margin-right:auto;font-size:.68rem;color:#316c5d}
+.organization-settings footer button,.integration-credentials footer button{border:1px solid var(--forest);background:var(--forest);color:#fff;padding:9px 13px;border-radius:6px;font-size:.7rem;font-weight:800}
+.integration-credentials{margin-top:14px}
+.integration-credentials>header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line);padding-bottom:17px;margin-bottom:20px}
+.integration-credentials h3{font-size:1rem;margin:0}
+.integration-credentials header p{font-size:.72rem;color:var(--muted);margin:5px 0 0}
+.mapping-list{display:flex;flex-direction:column;gap:9px}.mapping-list>div{display:grid;grid-template-columns:minmax(220px,1fr) minmax(150px,220px) auto;align-items:center;gap:12px;border:1px solid var(--line);border-radius:7px;padding:11px 13px}.mapping-list span strong,.mapping-list span small{display:block}.mapping-list span small{color:var(--muted);font-size:.65rem;margin-top:3px}.mapping-list input{border:1px solid #ccd4ce;border-radius:6px;background:#fafbf8;padding:9px 11px}.mapping-list button{border:1px solid #9db0a9;background:#fff;color:#285b4d;padding:9px 13px;border-radius:6px;font-size:.7rem;font-weight:800}
+@media(max-width:720px){.organization-settings,.integration-credentials{padding:17px}.organization-settings footer,.integration-credentials footer{align-items:flex-start;flex-direction:column}}

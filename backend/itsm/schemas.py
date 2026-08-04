@@ -55,6 +55,7 @@ class UserCreate(BaseModel):
     role: str
     team_id: int | None = None
     temporary_password: str
+    ringcentral_extension_number: str | None = None
 
 
 class PasswordReset(BaseModel):
@@ -66,6 +67,22 @@ class UserUpdate(BaseModel):
     role: str | None = None
     team_id: int | None = None
     availability: str | None = None
+    ringcentral_extension_id: str | None = None
+    ringcentral_extension_number: str | None = None
+
+
+class OrganizationUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    timezone: str = Field(min_length=2, max_length=80)
+    support_email: str = ""
+    support_phone: str = ""
+    logo_url: str = ""
+
+
+class IntegrationSecretsUpdate(BaseModel):
+    client_secret: str | None = None
+    jwt_credential: str | None = None
+    clear: list[str] = Field(default_factory=list)
 
 
 class AssetCreate(BaseModel):

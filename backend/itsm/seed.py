@@ -18,6 +18,8 @@ def seed(reset=False):
     if db.scalar(select(User.id).limit(1)):
         print("Database already contains data; seed skipped.")
         return
+    organization = Organization(name="Primary Organization", slug="primary", timezone="America/New_York")
+    db.add(organization); db.flush(); db.info["organization_id"] = organization.id
     departments = [Department(name=n) for n in ["Information Technology", "Finance", "Human Resources", "Clinical Operations", "Administration"]]
     locations = [Location(name=n) for n in ["Main Campus", "North Clinic", "Operations Center"]]
     db.add_all(departments + locations); db.flush()
@@ -114,6 +116,7 @@ def seed(reset=False):
         ("email","Email settings",{"host":"","port":993,"encryption":"TLS","support_address":"","poll_seconds":60,"unknown_sender":"exception","attachment_policy":"accept_metadata_only"},"Non-secret mailbox settings"),
         ("authentication","Local authentication",{"session_minutes":480,"lockout_attempts":5,"lockout_minutes":15,"minimum_password_length":12},"Local security policy"),
         ("retention","Data retention",{"tickets_days":2555,"audit_days":2555,"automation_failures_days":365},"Retention policy; deletion requires an approved external process"),
+        ("ringcentral","RingCentral phone integration",{"enabled":False,"environment":"production","connection_mode":"websocket","client_id":"","support_number":"","queue_extension":"","routing_mode":"rotating","ticket_trigger":"answered","default_team":"Service Desk","default_category":"Phone Support","default_priority":"Medium","caller_matching":"phone_number","unknown_caller":"create_ticket","open_ticket_on_answer":True,"create_missed_call_ticket":True},"Per-organization call routing and automatic ticket behavior"),
     ]
     db.add_all([ConfigItem(section=s,name=n,value=v,description=d) for s,n,v,d in config_defaults])
     db.commit(); db.close()

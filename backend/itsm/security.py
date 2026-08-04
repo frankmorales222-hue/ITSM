@@ -57,6 +57,7 @@ def get_current_session(request: Request, db: DBSession = Depends(get_db)) -> Se
     expiry = session.expires_at.replace(tzinfo=session.expires_at.tzinfo or now().tzinfo) if session else None
     if not session or expiry <= now() or not session.user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
+    db.info["organization_id"] = session.user.organization_id
     if request.method not in {"GET", "HEAD", "OPTIONS"} and request.headers.get("X-CSRF-Token") != session.csrf_token:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token")
     return session
@@ -76,4 +77,3 @@ def require_roles(*roles: Role):
 
 STAFF_ROLES = (Role.TECHNICIAN, Role.TEAM_LEAD, Role.MANAGER, Role.ADMIN)
 REPORT_ROLES = (Role.TEAM_LEAD, Role.MANAGER, Role.ADMIN, Role.AUDITOR)
-

@@ -10,4 +10,6 @@
 - Restricted tickets use role and team rules rather than arbitrary access-control lists.
 - Attachments are metadata-only by design; no file content is retained.
 - SQLite supports evaluation only. Use PostgreSQL for concurrent team use.
+- Organization isolation, organization administration, encrypted RingCentral credentials, call behavior settings, and technician-extension mapping are implemented. Live RingCentral event subscription, answered-call ticket creation, and technician screen push require the shared HTTPS/PostgreSQL deployment and organization credentials before they can be activated.
+- The local migration creates the first organization. A platform-owner provisioning console for creating additional companies is intentionally deferred until centralized authentication, PostgreSQL, backups, and operational monitoring are in place.
 - Microsoft Entra ID, Microsoft Graph, advanced automation, endpoint control, full CMDB, change/problem management, procurement, and clinical workflows are intentionally excluded.

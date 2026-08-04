@@ -6,4 +6,5 @@ import './settings.css'
 import './operations.css'
 import './routing.css'
 import './asset-inventory.css'
+import './organization-settings.css'
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>)
