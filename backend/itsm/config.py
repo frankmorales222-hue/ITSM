@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     login_attempts: int = 5
     lockout_minutes: int = 15
     assetpilot_url: str = "http://127.0.0.1:5080"
+    assetpilot_executable: str = ""
+    assetpilot_database_path: str = ""
 
     @property
     def origins(self) -> list[str]:

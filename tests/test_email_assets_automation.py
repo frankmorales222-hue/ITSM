@@ -81,6 +81,24 @@ def test_employee_and_asset_support_context(admin):
     if imported: assert imported[0]["assetpilot_url"].endswith(f"id={imported[0]['source_id']}")
 
 
+def test_assetpilot_one_click_launcher(admin, monkeypatch):
+    from itsm import main as main_module
+
+    monkeypatch.setattr(main_module, "ensure_assetpilot_running", lambda: None)
+    with SessionLocal() as db:
+        asset=db.scalar(select(Asset).where(Asset.asset_tag=="AST-10001"))
+        asset_id=asset.id; previous_source=asset.source; previous_source_id=asset.source_id
+        asset.source="AssetPilot"; asset.source_id=42; db.commit()
+    try:
+        opened=admin.post(f"/api/integrations/assetpilot/open/{asset_id}")
+        assert opened.status_code==200 and opened.json()["url"].endswith("/Assets/Details?id=42")
+        created=admin.post("/api/integrations/assetpilot/create")
+        assert created.status_code==200 and created.json()["url"].endswith("/Assets/Create")
+    finally:
+        with SessionLocal() as db:
+            asset=db.get(Asset,asset_id); asset.source=previous_source; asset.source_id=previous_source_id; db.commit()
+
+
 def test_admin_updates_user_availability(admin):
     users=admin.get("/api/admin/users").json();tech=next(u for u in users if u["username"]=="tech2")
     changed=admin.patch(f"/api/admin/users/{tech['id']}",json={"availability":"Busy"});assert changed.status_code==200 and changed.json()["availability"]=="Busy"

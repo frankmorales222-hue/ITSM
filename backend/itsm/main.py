@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from . import __version__
 from .assetpilot import assetpilot_preview, import_assetpilot
+from .assetpilot_runtime import assetpilot_healthy, ensure_assetpilot_running
 from .config import settings
 from .database import Base, engine, get_db
 from .models import *
@@ -418,6 +419,28 @@ def run_assetpilot_import(user: User = Depends(require_roles(Role.ADMIN)), db: S
     try: result = import_assetpilot(db, actor_id=user.id)
     except FileNotFoundError as exc: raise HTTPException(404, str(exc))
     audit(db, "assetpilot.imported", "inventory", None, user.id, new=result); db.commit(); return result
+
+
+@app.get("/api/integrations/assetpilot/status")
+def assetpilot_status(user: User = Depends(require_roles(*STAFF_ROLES, Role.AUDITOR))):
+    return {"running": assetpilot_healthy(), "url": settings.assetpilot_url.rstrip("/")}
+
+
+@app.post("/api/integrations/assetpilot/create")
+def open_assetpilot_create(user: User = Depends(require_roles(Role.ADMIN, Role.MANAGER))):
+    try: ensure_assetpilot_running()
+    except (FileNotFoundError, TimeoutError) as exc: raise HTTPException(503, str(exc))
+    return {"url": f"{settings.assetpilot_url.rstrip('/')}/Assets/Create"}
+
+
+@app.post("/api/integrations/assetpilot/open/{asset_id}")
+def open_assetpilot_asset(asset_id: int, user: User = Depends(require_roles(*STAFF_ROLES, Role.AUDITOR)), db: Session = Depends(get_db)):
+    asset = db.get(Asset, asset_id)
+    if not asset: raise HTTPException(404, "Asset not found")
+    if asset.source != "AssetPilot" or asset.source_id is None: raise HTTPException(422, "This asset is maintained in ITSM")
+    try: ensure_assetpilot_running()
+    except (FileNotFoundError, TimeoutError) as exc: raise HTTPException(503, str(exc))
+    return {"url": f"{settings.assetpilot_url.rstrip('/')}/Assets/Details?id={asset.source_id}"}
 
 
 @app.get("/api/assets/{asset_id}")
