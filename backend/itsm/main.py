@@ -3,7 +3,7 @@ import enum
 import io
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,6 +55,9 @@ def ticket_dict(ticket: Ticket, detail=False):
     data = {"id": ticket.id, "number": ticket.number, "request_type": ticket.request_type, "subject": ticket.subject,
             "description": ticket.description, "requester_id": ticket.requester_id,
             "requester": ticket.requester.display_name, "requester_email": ticket.requester.email,
+            "requester_department": ticket.employee.department.name if ticket.employee and ticket.employee.department else None,
+            "requester_location": ticket.employee.location.name if ticket.employee and ticket.employee.location else None,
+            "employee_id": ticket.employee_id,
             "assigned_user_id": ticket.assigned_user_id,
             "assigned_user": ticket.assigned_user.display_name if ticket.assigned_user else None,
             "team_id": ticket.team_id, "team": ticket.team.name, "status": ticket.status.value,
@@ -144,8 +147,14 @@ def bootstrap(user: User = Depends(current_user), db: Session = Depends(get_db))
     if user.role == Role.END_USER:
         employee = db.scalar(select(Employee).where(Employee.user_id == user.id))
         assets_query = assets_query.where(Asset.assigned_employee_id == (employee.id if employee else -1))
+    requesters = db.scalars(select(User).where(User.active.is_(True)).order_by(User.display_name)).all() if user.role in STAFF_ROLES else [user]
+    routing_config = db.scalar(select(ConfigItem).where(ConfigItem.section == "assignment"))
+    team_config = db.scalar(select(ConfigItem).where(ConfigItem.section == "teams"))
+    routing_method = ((routing_config.value or {}).get("method") if routing_config else None) or ((team_config.value or {}).get("routing_mode") if team_config else None) or "least_active"
     return {"user": user_dict(user), "teams": [{"id": t.id, "name": t.name, "queue": t.queue_name} for t in teams],
             "technicians": [user_dict(t) for t in techs],
+            "requesters": [{"id": r.id, "display_name": r.display_name, "email": r.email, "role": r.role.value} for r in requesters],
+            "routing_method": routing_method,
             "assets": [{"id": a.id, "asset_tag": a.asset_tag, "hostname": a.hostname, "model": a.model} for a in db.scalars(assets_query).all()],
             "announcements": [{"id": a.id, "title": a.title, "body": a.body, "severity": a.severity} for a in db.scalars(select(Announcement).where(Announcement.active.is_(True))).all()]}
 
@@ -155,9 +164,9 @@ def list_tickets(view: str = "all", q: str = "", user: User = Depends(current_us
     stmt = select(Ticket).where(visible_ticket_filter(user))
     closed = [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED]
     filters = {
-        "open": Ticket.status.notin_(closed), "unassigned": Ticket.assigned_user_id.is_(None),
-        "mine": Ticket.assigned_user_id == user.id, "team": Ticket.team_id == user.team_id,
-        "new": Ticket.status == TicketStatus.NEW, "high": Ticket.priority.in_(["Critical", "High"]),
+        "open": Ticket.status.notin_(closed), "unassigned": Ticket.assigned_user_id.is_(None) & Ticket.status.notin_(closed),
+        "mine": (Ticket.assigned_user_id == user.id) & Ticket.status.notin_(closed), "team": (Ticket.team_id == user.team_id) & Ticket.status.notin_(closed),
+        "new": Ticket.status == TicketStatus.NEW, "high": Ticket.priority.in_(["Critical", "High"]) & Ticket.status.notin_(closed),
         "waiting_user": Ticket.status == TicketStatus.WAITING_USER,
         "waiting_vendor": Ticket.status == TicketStatus.WAITING_VENDOR,
         "waiting_approval": Ticket.status == TicketStatus.WAITING_APPROVAL,
@@ -173,16 +182,40 @@ def list_tickets(view: str = "all", q: str = "", user: User = Depends(current_us
     return [ticket_dict(t) for t in db.scalars(stmt.order_by(Ticket.updated_at.desc()).limit(250)).unique().all()]
 
 
+@app.get("/api/tickets/counts")
+def ticket_counts(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    closed = [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED]
+    filters = {
+        "open": Ticket.status.notin_(closed), "unassigned": Ticket.assigned_user_id.is_(None) & Ticket.status.notin_(closed),
+        "mine": (Ticket.assigned_user_id == user.id) & Ticket.status.notin_(closed), "team": (Ticket.team_id == user.team_id) & Ticket.status.notin_(closed),
+        "new": Ticket.status == TicketStatus.NEW, "high": Ticket.priority.in_(["Critical", "High"]) & Ticket.status.notin_(closed),
+        "waiting_user": Ticket.status == TicketStatus.WAITING_USER, "waiting_vendor": Ticket.status == TicketStatus.WAITING_VENDOR,
+        "waiting_approval": Ticket.status == TicketStatus.WAITING_APPROVAL, "resolved": Ticket.status == TicketStatus.RESOLVED,
+        "closed": Ticket.status == TicketStatus.CLOSED,
+        "breached": (Ticket.resolution_due < now()) & Ticket.status.notin_(closed),
+        "approaching": (Ticket.resolution_due >= now()) & (Ticket.resolution_due < now() + timedelta(hours=4)) & Ticket.status.notin_(closed),
+    }
+    base = visible_ticket_filter(user)
+    return {name: db.scalar(select(func.count(Ticket.id)).where(base, clause)) or 0 for name, clause in filters.items()}
+
+
 @app.post("/api/tickets", status_code=201)
 def create_ticket(payload: TicketCreate, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     warnings = sensitive_warnings(payload.subject + " " + payload.description)
     priority = priority_for(payload.impact, payload.urgency)
     category = {"Request access": "Access", "Request software": "Software", "Request equipment": "Hardware",
                 "New employee request": "Onboarding"}.get(payload.request_type, "General")
-    team, tech, reason = route_ticket(db, category, user)
+    requester = user
+    if payload.requester_id is not None and payload.requester_id != user.id:
+        if user.role not in STAFF_ROLES: raise HTTPException(403, "Only IT staff can create requests for another user")
+        requester = db.get(User, payload.requester_id)
+        if not requester or not requester.active: raise HTTPException(422, "Requester is not an active application user")
+    employee = db.scalar(select(Employee).where(Employee.user_id == requester.id))
+    team, tech, reason = route_ticket(db, category, requester)
     first_due, resolution_due = sla_dates(priority)
     ticket = Ticket(number=next_ticket_number(db, payload.request_type), request_type=payload.request_type,
-                    subject=payload.subject, description=payload.description, requester_id=user.id,
+                    subject=payload.subject, description=payload.description, requester_id=requester.id,
+                    employee_id=employee.id if employee else None,
                     team_id=team.id, assigned_user_id=tech.id if tech else None,
                     status=TicketStatus.ASSIGNED if tech else TicketStatus.NEW, priority=priority,
                     impact=payload.impact, urgency=payload.urgency, category=category, restricted=payload.restricted,
@@ -195,7 +228,7 @@ def create_ticket(payload: TicketCreate, request: Request, user: User = Depends(
                          new_value={"status": ticket.status.value, "team": team.name, "assignee": tech.display_name if tech else None}))
     audit(db, "ticket.created", "ticket", ticket.id, user.id, new={"number": ticket.number, "route_reason": reason},
           source_ip=request.client.host if request.client else None)
-    notify(db, user.id, "ticket.created", f"{ticket.number} created", "Your request was received.", ticket.id)
+    notify(db, requester.id, "ticket.created", f"{ticket.number} created", "Your request was received.", ticket.id)
     notify(db, tech.id if tech else None, "ticket.assigned", f"{ticket.number} assigned", ticket.subject, ticket.id)
     if not tech: fail_automation(db, "assignment", "No available technician", {"ticket_number": ticket.number}, "ticket", ticket.id)
     db.commit(); db.refresh(ticket)
@@ -327,6 +360,33 @@ def assets(q: str = "", user: User = Depends(current_user), db: Session = Depend
              "condition": a.condition, "assigned_employee": f"{a.assigned_employee.first_name} {a.assigned_employee.last_name}" if a.assigned_employee else None} for a in db.scalars(stmt.order_by(Asset.asset_tag)).all()]
 
 
+@app.get("/api/assets/summary")
+def asset_summary(user: User = Depends(require_roles(*STAFF_ROLES, Role.AUDITOR)), db: Session = Depends(get_db)):
+    statuses = db.execute(select(Asset.status, func.count(Asset.id)).group_by(Asset.status)).all()
+    return {"total": db.scalar(select(func.count(Asset.id))) or 0,
+            "assigned": db.scalar(select(func.count(Asset.id)).where(Asset.assigned_employee_id.is_not(None))) or 0,
+            "unassigned": db.scalar(select(func.count(Asset.id)).where(Asset.assigned_employee_id.is_(None))) or 0,
+            "warranty_expiring": db.scalar(select(func.count(Asset.id)).where(Asset.warranty_expiration.between(date.today(), date.today()+timedelta(days=90)))) or 0,
+            "by_status": [{"label": label, "value": count} for label,count in statuses],
+            "inventory_source": "Northstar local inventory",
+            "integration_status": "Ready for Asset Inventory connector"}
+
+
+@app.get("/api/assets/{asset_id}")
+def asset_detail(asset_id: int, user: User = Depends(require_roles(*STAFF_ROLES, Role.AUDITOR)), db: Session = Depends(get_db)):
+    asset = db.get(Asset, asset_id)
+    if not asset: raise HTTPException(404, "Asset not found")
+    history = db.scalars(select(AssetHistory).where(AssetHistory.asset_id == asset.id).order_by(AssetHistory.created_at.desc())).all()
+    related = db.scalars(select(Ticket).join(TicketAsset, Ticket.id == TicketAsset.ticket_id).where(TicketAsset.asset_id == asset.id, visible_ticket_filter(user)).order_by(Ticket.updated_at.desc())).all()
+    return {"id": asset.id, "asset_tag": asset.asset_tag, "hostname": asset.hostname, "serial_number": asset.serial_number,
+            "manufacturer": asset.manufacturer, "model": asset.model, "asset_type": asset.asset_type, "status": asset.status,
+            "condition": asset.condition, "notes": asset.notes, "purchase_date": asset.purchase_date,
+            "warranty_expiration": asset.warranty_expiration,
+            "employee": {"id": asset.assigned_employee.id, "name": f"{asset.assigned_employee.first_name} {asset.assigned_employee.last_name}", "email": asset.assigned_employee.work_email} if asset.assigned_employee else None,
+            "history": [{"id": h.id, "event_type": h.event_type, "previous": h.previous_value, "new": h.new_value, "created_at": h.created_at} for h in history],
+            "tickets": [ticket_dict(t) for t in related]}
+
+
 @app.post("/api/assets", status_code=201)
 def create_asset(payload: AssetCreate, user: User = Depends(require_roles(Role.ADMIN, Role.MANAGER)), db: Session = Depends(get_db)):
     asset = Asset(**payload.model_dump()); db.add(asset)
@@ -354,6 +414,23 @@ def employees(q: str = "", user: User = Depends(require_roles(*STAFF_ROLES, Role
     return [{"id": e.id, "employee_number": e.employee_number, "name": f"{e.preferred_name or e.first_name} {e.last_name}", "email": e.work_email,
              "department": e.department.name if e.department else None, "location": e.location.name if e.location else None,
              "job_title": e.job_title, "status": e.employment_status, "vip": e.vip, "source": e.source} for e in db.scalars(stmt.order_by(Employee.last_name)).all()]
+
+
+@app.get("/api/employees/{employee_id}")
+def employee_detail(employee_id: int, user: User = Depends(require_roles(*STAFF_ROLES, Role.AUDITOR)), db: Session = Depends(get_db)):
+    employee = db.get(Employee, employee_id)
+    if not employee: raise HTTPException(404, "Employee not found")
+    assets = db.scalars(select(Asset).where(Asset.assigned_employee_id == employee.id).order_by(Asset.asset_tag)).all()
+    tickets = db.scalars(select(Ticket).where(or_(Ticket.employee_id == employee.id, Ticket.requester_id == employee.user_id), visible_ticket_filter(user)).order_by(Ticket.updated_at.desc())).all()
+    open_status = [TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED]
+    return {"id": employee.id, "employee_number": employee.employee_number,
+            "name": f"{employee.preferred_name or employee.first_name} {employee.last_name}", "email": employee.work_email,
+            "department": employee.department.name if employee.department else None, "location": employee.location.name if employee.location else None,
+            "job_title": employee.job_title, "employment_status": employee.employment_status, "support_region": employee.support_region,
+            "vip": employee.vip, "source": employee.source, "start_date": employee.start_date, "end_date": employee.end_date,
+            "assets": [{"id": a.id, "asset_tag": a.asset_tag, "hostname": a.hostname, "model": a.model, "status": a.status} for a in assets],
+            "open_tickets": [ticket_dict(t) for t in tickets if t.status not in open_status],
+            "previous_tickets": [ticket_dict(t) for t in tickets if t.status in open_status]}
 
 
 @app.get("/api/admin/users")
@@ -384,12 +461,29 @@ def reset_password(user_id: int, payload: PasswordReset, user: User = Depends(re
     audit(db, "password.admin_reset", "user", account.id, user.id); db.commit(); return {"ok": True}
 
 
+@app.patch("/api/admin/users/{user_id}")
+def update_user(user_id: int, payload: UserUpdate, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    account = db.get(User, user_id)
+    if not account: raise HTTPException(404, "User not found")
+    changes = payload.model_dump(exclude_none=True); previous = {}
+    if "role" in changes: changes["role"] = Role(changes["role"])
+    for field,value in changes.items():
+        old = getattr(account, field); previous[field] = old.value if isinstance(old, enum.Enum) else old; setattr(account, field, value)
+    audit(db, "user.updated", "user", account.id, user.id, previous, {k: str(v) for k,v in changes.items()}); db.commit()
+    return user_dict(account)
+
+
 @app.get("/api/admin/settings/{section}")
 def get_settings(section: str, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
     rows = db.scalars(select(ConfigItem).where(ConfigItem.section == section).order_by(ConfigItem.name)).all()
-    return [{"id": row.id, "section": row.section, "name": row.name,
-             "value": {k: ("••••••" if row.sensitive else v) for k,v in row.value.items()},
-             "description": row.description, "updated_at": row.updated_at} for row in rows]
+    result = []
+    for row in rows:
+        value = dict(row.value or {})
+        if section == "assignment": value.setdefault("method", "least_active")
+        result.append({"id": row.id, "section": row.section, "name": row.name,
+                       "value": {k: ("••••••" if row.sensitive else v) for k,v in value.items()},
+                       "description": row.description, "updated_at": row.updated_at})
+    return result
 
 
 @app.patch("/api/admin/settings/{item_id}")

@@ -3,8 +3,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
-from .models import (AuditEvent, AutomationFailure, EmailMessage, Notification, Role, Sequence,
-                     Team, Ticket, TicketHistory, TicketMessage, TicketStatus, User, now)
+from .models import (AuditEvent, AutomationFailure, ConfigItem, EmailMessage, Notification, Role, Sequence,
+                     SystemState, Team, Ticket, TicketHistory, TicketMessage, TicketStatus, User, now)
 
 PRIORITY_HOURS = {
     "Critical": (1, 4), "High": (4, 16), "Medium": (8, 40), "Low": (16, 80)
@@ -53,12 +53,31 @@ def route_ticket(db: Session, category: str, requester: User) -> tuple[Team, Use
     techs = db.scalars(select(User).where(User.team_id == team.id, User.role.in_([Role.TECHNICIAN, Role.TEAM_LEAD]), User.active.is_(True), User.availability == "Available")).all()
     if not techs:
         return team, None, reason + "; no available technician"
+    config = db.scalar(select(ConfigItem).where(ConfigItem.section == "assignment"))
+    team_config = db.scalar(select(ConfigItem).where(ConfigItem.section == "teams"))
+    method = (config.value or {}).get("method") if config else None
+    method = method or ((team_config.value or {}).get("routing_mode") if team_config else None) or "least_active"
+    if method == "manual":
+        return team, None, reason + "; manual assignment configured"
     counts = dict(db.execute(select(Ticket.assigned_user_id, func.count(Ticket.id)).where(
         Ticket.assigned_user_id.in_([t.id for t in techs]),
         Ticket.status.notin_([TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED])
     ).group_by(Ticket.assigned_user_id)).all())
+    if method == "round_robin":
+        techs = sorted(techs, key=lambda t: t.id)
+        state_key = f"round_robin_team_{team.id}"
+        state = db.get(SystemState, state_key)
+        last_id = (state.value or {}).get("last_user_id") if state else None
+        eligible_ids = [t.id for t in techs]
+        next_index = (eligible_ids.index(last_id) + 1) % len(techs) if last_id in eligible_ids else 0
+        tech = techs[next_index]
+        if not state:
+            state = SystemState(key=state_key, value={})
+            db.add(state)
+        state.value = {"last_user_id": tech.id, "last_assigned_at": now().isoformat()}
+        return team, tech, reason + f"; round-robin selected {tech.display_name}"
     tech = min(techs, key=lambda t: (counts.get(t.id, 0), t.id))
-    return team, tech, reason + f"; least-active technician ({counts.get(tech.id, 0)} active)"
+    return team, tech, reason + f"; least-active selected {tech.display_name} ({counts.get(tech.id, 0)} active)"
 
 
 def can_view_ticket(user: User, ticket: Ticket) -> bool:
@@ -113,4 +132,3 @@ def fail_automation(db: Session, kind: str, summary: str, details: dict, related
     db.add(failure)
     audit(db, "automation.failed", "automation_failure", None, new={"type": kind, "summary": summary})
     return failure
-

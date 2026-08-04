@@ -24,7 +24,7 @@ def upgrade():
     op.bulk_insert(table, [
         {"section":"teams","name":"Teams and queues","value":{"default_queue":"Service Desk","routing_mode":"least_active"},"description":"Default ownership and routing behavior","sensitive":False},
         {"section":"categories","name":"Categories","value":{"values":["General","Access","Software","Hardware","Onboarding","Network","Security"]},"description":"Available ticket categories","sensitive":False},
-        {"section":"assignment","name":"Assignment rules","value":{"fallback_team":"Service Desk","exclude_unavailable":True,"category_first":True},"description":"Routing rule controls","sensitive":False},
+        {"section":"assignment","name":"Assignment rules","value":{"method":"least_active","fallback_team":"Service Desk","exclude_unavailable":True,"category_first":True},"description":"Routing rule controls","sensitive":False},
         {"section":"sla","name":"SLA policies","value":{"Critical":{"first_response_hours":1,"resolution_hours":4},"High":{"first_response_hours":4,"resolution_hours":16},"Medium":{"first_response_hours":8,"resolution_hours":40},"Low":{"first_response_hours":16,"resolution_hours":80}},"description":"Priority-based service targets","sensitive":False},
         {"section":"calendar","name":"Business hours","value":{"timezone":"America/New_York","days":["Monday","Tuesday","Wednesday","Thursday","Friday"],"start":"08:00","end":"17:00","holidays":[]},"description":"Default support calendar","sensitive":False},
         {"section":"notifications","name":"Notification templates","value":{"ticket_created":"Your request {ticket_number} was received.","ticket_resolved":"Your request {ticket_number} was resolved."},"description":"User-facing templates","sensitive":False},

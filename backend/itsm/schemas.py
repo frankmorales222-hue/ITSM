@@ -20,6 +20,7 @@ class TicketCreate(BaseModel):
     impact: str = "Medium"
     urgency: str = "Medium"
     restricted: bool = False
+    requester_id: int | None = None
 
 
 class MessageCreate(BaseModel):
@@ -58,6 +59,13 @@ class UserCreate(BaseModel):
 
 class PasswordReset(BaseModel):
     temporary_password: str
+
+
+class UserUpdate(BaseModel):
+    active: bool | None = None
+    role: str | None = None
+    team_id: int | None = None
+    availability: str | None = None
 
 
 class AssetCreate(BaseModel):

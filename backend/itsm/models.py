@@ -167,6 +167,7 @@ class Ticket(Base, TimestampMixin):
     reopened_count: Mapped[int] = mapped_column(Integer, default=0)
     route_reason: Mapped[str] = mapped_column(String(240), default="Default queue fallback")
     requester: Mapped[User] = relationship(foreign_keys=[requester_id])
+    employee: Mapped[Employee | None] = relationship(foreign_keys=[employee_id])
     assigned_user: Mapped[User | None] = relationship(foreign_keys=[assigned_user_id])
     team: Mapped[Team] = relationship()
     assets: Mapped[list[Asset]] = relationship(secondary="ticket_assets")

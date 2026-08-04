@@ -1,7 +1,7 @@
 from datetime import timedelta
 from conftest import login_as
 from itsm.database import SessionLocal
-from itsm.models import AuditEvent, Notification, Role, Team, Ticket, TicketMessage, TicketStatus, User, now
+from itsm.models import AuditEvent, ConfigItem, Notification, Role, SystemState, Team, Ticket, TicketMessage, TicketStatus, User, now
 from itsm.services import priority_for, route_ticket, sla_dates
 from sqlalchemy import select
 
@@ -70,3 +70,21 @@ def test_audit_created_for_ticket_change(client):
     assert client.patch(f"/api/tickets/{ticket['id']}",json={"category":"Network"}).status_code==200
     with SessionLocal() as db: assert db.scalar(select(AuditEvent).where(AuditEvent.action=="ticket.updated",AuditEvent.record_id==str(ticket["id"])))
 
+
+def test_staff_creates_ticket_for_requester_and_counts_update(admin):
+    bootstrap=admin.get("/api/bootstrap").json();requester=next(r for r in bootstrap["requesters"] if r["email"]=="user2@example.test")
+    before=admin.get("/api/tickets/counts").json()["open"]
+    created=admin.post("/api/tickets",json={"request_type":"Request access","subject":"Access request created by service desk","description":"Please provide access to the approved departmental resource.","requester_id":requester["id"]})
+    assert created.status_code==201
+    ticket=created.json()["ticket"];assert ticket["requester_email"]=="user2@example.test" and ticket["requester_department"]
+    assert admin.get("/api/tickets/counts").json()["open"]==before+1
+
+
+def test_round_robin_selects_next_available_technician():
+    with SessionLocal() as db:
+        requester=db.scalar(select(User).where(User.username=="user1"));config=db.scalar(select(ConfigItem).where(ConfigItem.section=="assignment"));original=dict(config.value)
+        config.value={**original,"method":"round_robin"};state=db.get(SystemState,"round_robin_team_1")
+        if state: db.delete(state)
+        db.commit();_,first,first_reason=route_ticket(db,"General",requester);db.flush();_,second,second_reason=route_ticket(db,"General",requester)
+        assert first and second and first.id!=second.id and "round-robin" in first_reason and "round-robin" in second_reason
+        config.value=original;db.commit()

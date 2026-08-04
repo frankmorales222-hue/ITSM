@@ -58,3 +58,15 @@ def test_admin_configuration_is_editable_and_audited(admin):
     assert admin.patch(f"/api/admin/settings/{rows[0]['id']}",json={"value":value}).status_code==200
     updated=admin.get("/api/admin/settings/email").json();assert updated[0]["value"]["poll_seconds"]==90
     events=admin.get("/api/audit").json();assert any(e["action"]=="configuration.changed" for e in events)
+
+
+def test_employee_and_asset_support_context(admin):
+    employee=admin.get("/api/employees/1");assert employee.status_code==200 and employee.json()["assets"] and "open_tickets" in employee.json()
+    asset=admin.get("/api/assets/1");assert asset.status_code==200 and asset.json()["history"] and asset.json()["employee"]["name"]
+    summary=admin.get("/api/assets/summary").json();assert summary["total"]>=25 and summary["assigned"]>0
+
+
+def test_admin_updates_user_availability(admin):
+    users=admin.get("/api/admin/users").json();tech=next(u for u in users if u["username"]=="tech2")
+    changed=admin.patch(f"/api/admin/users/{tech['id']}",json={"availability":"Busy"});assert changed.status_code==200 and changed.json()["availability"]=="Busy"
+    restored=admin.patch(f"/api/admin/users/{tech['id']}",json={"availability":"Available"});assert restored.json()["availability"]=="Available"

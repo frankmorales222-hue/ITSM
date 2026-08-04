@@ -107,7 +107,7 @@ def seed(reset=False):
     config_defaults = [
         ("teams","Teams and queues",{"default_queue":"Service Desk","routing_mode":"least_active"},"Default ownership and routing behavior"),
         ("categories","Categories",{"values":["General","Access","Software","Hardware","Onboarding","Network","Security"]},"Available ticket categories"),
-        ("assignment","Assignment rules",{"fallback_team":"Service Desk","exclude_unavailable":True,"category_first":True},"Routing rule controls"),
+        ("assignment","Assignment rules",{"method":"least_active","fallback_team":"Service Desk","exclude_unavailable":True,"category_first":True},"Routing rule controls"),
         ("sla","SLA policies",{"Critical":{"first_response_hours":1,"resolution_hours":4},"High":{"first_response_hours":4,"resolution_hours":16},"Medium":{"first_response_hours":8,"resolution_hours":40},"Low":{"first_response_hours":16,"resolution_hours":80}},"Priority-based service targets"),
         ("calendar","Business hours",{"timezone":"America/New_York","days":["Monday","Tuesday","Wednesday","Thursday","Friday"],"start":"08:00","end":"17:00","holidays":[]},"Default support calendar"),
         ("notifications","Notification templates",{"ticket_created":"Your request {ticket_number} was received.","ticket_resolved":"Your request {ticket_number} was resolved."},"User-facing templates"),
