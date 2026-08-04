@@ -13,3 +13,7 @@ pytest-cache-files-*/
 htmlcov/
 coverage.xml
 logs/
+data/backups/*.sqlite
+data/backups/*.sqlite.sha256
+data/backups/*.dump
+data/backups/*.dump.sha256

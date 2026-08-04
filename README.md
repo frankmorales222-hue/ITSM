@@ -30,10 +30,15 @@ These are test-only identities using the reserved `.test` domain. Replace or dis
 
 ## Useful scripts
 
+- Use the `.cmd` launchers when PowerShell execution policy blocks direct `.ps1` commands.
+- `scripts\install.cmd`: install dependencies, build the interface, migrate, and seed.
 - `scripts\init-db.ps1`: apply migrations and seed an empty database.
-- `scripts\build.ps1`: build the interface and run automated tests.
+- `scripts\build.cmd`: reproducibly build the interface and run automated tests.
+- `scripts\backup.cmd`: create and verify a safe SQLite or PostgreSQL backup.
+- `scripts\production-check.cmd`: reject unsafe or incomplete production configuration.
+- `scripts\migrate-to-postgres.ps1`: securely prompt for PostgreSQL credentials, then back up and transfer the local SQLite database to an empty PostgreSQL database.
 - `scripts\reset-demo.ps1 -Confirm`: destructively recreate demo data.
 - `scripts\configure-mail-secret.ps1 -Username support@example.org`: store the IMAP secret in Windows Credential Manager.
 - `scripts\start-dev.ps1`: run backend and frontend development servers.
 
-See [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md), [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md), and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for operating guidance.
+See [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md), [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md), [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md), and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for operating guidance.

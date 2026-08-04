@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, select, text
@@ -26,6 +27,7 @@ from .services import *
 app = FastAPI(title="Northstar Desk API", version=__version__, docs_url="/api/docs", redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=settings.origins, allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.hosts)
 started_at = now()
 
 
@@ -37,7 +39,7 @@ async def security_headers(request: Request, call_next):
     response.headers.update({
         "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
         "Referrer-Policy": "same-origin", "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-        "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000",
+        "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'",
         "X-Correlation-ID": correlation_id,
     })
     return response
@@ -109,6 +111,16 @@ def ticket_dict(ticket: Ticket, detail=False):
 
 @app.get("/api/health/live")
 def live(): return {"status": "ok", "version": __version__}
+
+
+@app.get("/api/health/ready")
+def ready(db: Session = Depends(get_db)):
+    """Load-balancer readiness probe. It intentionally exposes no configuration details."""
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(503, "Application database is unavailable")
+    return {"status": "ready", "version": __version__}
 
 
 @app.post("/api/auth/login")
