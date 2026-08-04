@@ -57,7 +57,8 @@ def asset_dict(asset: Asset, detail=False):
             "assigned_employee": f"{asset.assigned_employee.first_name} {asset.assigned_employee.last_name}" if asset.assigned_employee else None,
             "location": asset.location.name if asset.location else None,
             "department": asset.department.name if asset.department else None,
-            "source": asset.source, "is_archived": asset.is_archived}
+            "source": asset.source, "source_id": asset.source_id, "is_archived": asset.is_archived,
+            "assetpilot_url": f"{settings.assetpilot_url.rstrip('/')}/Assets/Details?id={asset.source_id}" if asset.source == "AssetPilot" and asset.source_id is not None else None}
     if detail:
         data.update({"location_id": asset.location_id, "department_id": asset.department_id,
                      "vendor": asset.vendor, "purpose": asset.purpose, "company": asset.company,
@@ -390,7 +391,8 @@ def asset_summary(user: User = Depends(require_roles(*STAFF_ROLES, Role.AUDITOR)
             "archived": db.scalar(select(func.count(Asset.id)).where(Asset.is_archived.is_(True))) or 0,
             "warranty_expiring": db.scalar(select(func.count(Asset.id)).where(current, Asset.warranty_expiration.between(date.today(), date.today()+timedelta(days=90)))) or 0,
             "by_status": [{"label": label, "value": count} for label,count in statuses],
-            "inventory_source": "Northstar Desk + AssetPilot", "integration_status": "Unified inventory"}
+            "inventory_source": "Northstar Desk + AssetPilot", "integration_status": "Unified inventory",
+            "assetpilot_url": settings.assetpilot_url.rstrip("/")}
 
 
 @app.get("/api/assets/metadata")

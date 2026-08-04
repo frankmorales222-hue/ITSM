@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     reopen_days: int = 7
     login_attempts: int = 5
     lockout_minutes: int = 15
+    assetpilot_url: str = "http://127.0.0.1:5080"
 
     @property
     def origins(self) -> list[str]:
@@ -21,4 +22,3 @@ class Settings(BaseSettings):
 
 settings = Settings()
 Path("data").mkdir(exist_ok=True)
-
