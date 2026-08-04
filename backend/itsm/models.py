@@ -1,6 +1,6 @@
 import enum
 from datetime import date, datetime, timezone
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
@@ -99,13 +99,16 @@ class Employee(Base, TimestampMixin):
 
 class Asset(Base, TimestampMixin):
     __tablename__ = "assets"
-    __table_args__ = (UniqueConstraint("hostname"), UniqueConstraint("serial_number"))
+    __table_args__ = (UniqueConstraint("hostname"), UniqueConstraint("serial_number"),
+                      Index("uq_assets_source_source_id", "source", "source_id", unique=True))
     id: Mapped[int] = mapped_column(primary_key=True)
     asset_tag: Mapped[str] = mapped_column(String(60), unique=True, index=True)
     hostname: Mapped[str | None] = mapped_column(String(120), nullable=True)
     serial_number: Mapped[str | None] = mapped_column(String(120), nullable=True)
     manufacturer: Mapped[str] = mapped_column(String(80))
     model: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(String(160), default="")
+    category: Mapped[str] = mapped_column(String(80), default="Computer")
     asset_type: Mapped[str] = mapped_column(String(60))
     status: Mapped[str] = mapped_column(String(40), default="Stock")
     condition: Mapped[str] = mapped_column(String(40), default="Good")
@@ -113,9 +116,22 @@ class Asset(Base, TimestampMixin):
     department_id: Mapped[int | None] = mapped_column(ForeignKey("departments.id"))
     assigned_employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"))
     purchase_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    purchase_cost_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     warranty_expiration: Mapped[date | None] = mapped_column(Date, nullable=True)
+    vendor: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    purpose: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    company: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    project: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    mac_address: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    source_reference: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    source: Mapped[str] = mapped_column(String(40), default="Manual")
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    extended_data: Mapped[dict] = mapped_column(JSON, default=dict)
     notes: Mapped[str] = mapped_column(Text, default="")
     assigned_employee: Mapped[Employee | None] = relationship()
+    location: Mapped[Location | None] = relationship()
+    department: Mapped[Department | None] = relationship()
 
 
 class AssetHistory(Base):

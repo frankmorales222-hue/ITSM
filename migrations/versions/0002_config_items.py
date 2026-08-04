@@ -1,6 +1,7 @@
 """Add editable core configuration catalog."""
 from alembic import op
 import sqlalchemy as sa
+from datetime import datetime, timezone
 
 revision = "0002_config_items"
 down_revision = "0001_initial"
@@ -9,19 +10,27 @@ depends_on = None
 
 
 def upgrade():
-    table = op.create_table(
-        "config_items",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("section", sa.String(80), nullable=False),
-        sa.Column("name", sa.String(120), nullable=False),
-        sa.Column("value", sa.JSON(), nullable=False),
-        sa.Column("description", sa.String(500), nullable=False),
-        sa.Column("sensitive", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint("section", "name"),
-    )
-    op.create_index("ix_config_items_section", "config_items", ["section"])
-    op.bulk_insert(table, [
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    table = sa.table("config_items", sa.column("section", sa.String), sa.column("name", sa.String),
+                     sa.column("value", sa.JSON), sa.column("description", sa.String),
+                     sa.column("sensitive", sa.Boolean), sa.column("updated_at", sa.DateTime(timezone=True)))
+    if "config_items" not in inspector.get_table_names():
+        op.create_table(
+            "config_items",
+            sa.Column("id", sa.Integer(), primary_key=True),
+            sa.Column("section", sa.String(80), nullable=False),
+            sa.Column("name", sa.String(120), nullable=False),
+            sa.Column("value", sa.JSON(), nullable=False),
+            sa.Column("description", sa.String(500), nullable=False),
+            sa.Column("sensitive", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.UniqueConstraint("section", "name"),
+        )
+        op.create_index("ix_config_items_section", "config_items", ["section"])
+    if bind.scalar(sa.select(sa.func.count()).select_from(table)):
+        return
+    rows = [
         {"section":"teams","name":"Teams and queues","value":{"default_queue":"Service Desk","routing_mode":"least_active"},"description":"Default ownership and routing behavior","sensitive":False},
         {"section":"categories","name":"Categories","value":{"values":["General","Access","Software","Hardware","Onboarding","Network","Security"]},"description":"Available ticket categories","sensitive":False},
         {"section":"assignment","name":"Assignment rules","value":{"method":"least_active","fallback_team":"Service Desk","exclude_unavailable":True,"category_first":True},"description":"Routing rule controls","sensitive":False},
@@ -31,7 +40,11 @@ def upgrade():
         {"section":"email","name":"Email settings","value":{"host":"","port":993,"encryption":"TLS","support_address":"","poll_seconds":60,"unknown_sender":"exception","attachment_policy":"accept_metadata_only"},"description":"Non-secret mailbox settings","sensitive":False},
         {"section":"authentication","name":"Local authentication","value":{"session_minutes":480,"lockout_attempts":5,"lockout_minutes":15,"minimum_password_length":12},"description":"Local security policy","sensitive":False},
         {"section":"retention","name":"Data retention","value":{"tickets_days":2555,"audit_days":2555,"automation_failures_days":365},"description":"Retention policy","sensitive":False},
-    ])
+    ]
+    timestamp = datetime.now(timezone.utc)
+    for row in rows:
+        row["updated_at"] = timestamp
+    op.bulk_insert(table, rows)
 
 
 def downgrade():

@@ -6,11 +6,10 @@ Northstar Desk is a locally hosted, browser-based IT service management applicat
 
 Prerequisites: Python 3.12+ and PowerShell 5.1+. Node.js 20+ is needed only to rebuild the React interface; the prepared local workspace includes a production build.
 
-1. Open PowerShell in this folder.
-2. Run `Set-ExecutionPolicy -Scope Process Bypass` if local script execution is restricted.
-3. Run `scripts\install.ps1`.
-4. Run `scripts\start.ps1`.
-5. Open <http://127.0.0.1:8000>.
+1. Run `scripts\install.ps1` once during initial setup.
+2. After installation, double-click `Start ITSM.cmd` whenever you want to start the app.
+3. The launcher automatically applies safe database updates before starting.
+4. Open <http://127.0.0.1:8000>.
 
 The installer creates a virtual environment, installs pinned Python dependencies, builds the React interface, applies Alembic migrations, and loads demo data. PostgreSQL is recommended for team deployment; set `ITSM_DATABASE_URL` in `.env` before initialization.
 

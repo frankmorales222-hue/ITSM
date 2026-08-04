@@ -13,6 +13,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from . import __version__
+from .assetpilot import assetpilot_preview, import_assetpilot
 from .config import settings
 from .database import Base, engine, get_db
 from .models import *
@@ -45,6 +46,26 @@ def user_dict(user: User):
             "role": user.role.value, "active": user.active, "must_change_password": user.must_change_password,
             "availability": user.availability, "team_id": user.team_id, "team": user.team.name if user.team else None,
             "last_login_at": user.last_login_at}
+
+
+def asset_dict(asset: Asset, detail=False):
+    data = {"id": asset.id, "asset_tag": asset.asset_tag, "hostname": asset.hostname,
+            "serial_number": asset.serial_number, "name": asset.name, "manufacturer": asset.manufacturer,
+            "model": asset.model, "category": asset.category, "asset_type": asset.asset_type,
+            "status": asset.status, "condition": asset.condition,
+            "assigned_employee_id": asset.assigned_employee_id,
+            "assigned_employee": f"{asset.assigned_employee.first_name} {asset.assigned_employee.last_name}" if asset.assigned_employee else None,
+            "location": asset.location.name if asset.location else None,
+            "department": asset.department.name if asset.department else None,
+            "source": asset.source, "is_archived": asset.is_archived}
+    if detail:
+        data.update({"location_id": asset.location_id, "department_id": asset.department_id,
+                     "vendor": asset.vendor, "purpose": asset.purpose, "company": asset.company,
+                     "project": asset.project, "mac_address": asset.mac_address,
+                     "purchase_date": asset.purchase_date, "purchase_cost_cents": asset.purchase_cost_cents,
+                     "warranty_expiration": asset.warranty_expiration, "notes": asset.notes,
+                     "source_reference": asset.source_reference, "extended_data": asset.extended_data})
+    return data
 
 
 def aware(value: datetime) -> datetime:
@@ -350,26 +371,51 @@ def dashboard(user: User = Depends(require_roles(*REPORT_ROLES)), db: Session = 
 
 
 @app.get("/api/assets")
-def assets(q: str = "", user: User = Depends(current_user), db: Session = Depends(get_db)):
+def assets(q: str = "", include_archived: bool = False, user: User = Depends(current_user), db: Session = Depends(get_db)):
     stmt = select(Asset)
+    if not include_archived: stmt = stmt.where(Asset.is_archived.is_(False))
     if user.role == Role.END_USER:
         emp = db.scalar(select(Employee).where(Employee.user_id == user.id)); stmt = stmt.where(Asset.assigned_employee_id == (emp.id if emp else -1))
     if q: stmt = stmt.where(or_(Asset.asset_tag.ilike(f"%{q}%"), Asset.hostname.ilike(f"%{q}%"), Asset.serial_number.ilike(f"%{q}%")))
-    return [{"id": a.id, "asset_tag": a.asset_tag, "hostname": a.hostname, "serial_number": a.serial_number,
-             "manufacturer": a.manufacturer, "model": a.model, "asset_type": a.asset_type, "status": a.status,
-             "condition": a.condition, "assigned_employee": f"{a.assigned_employee.first_name} {a.assigned_employee.last_name}" if a.assigned_employee else None} for a in db.scalars(stmt.order_by(Asset.asset_tag)).all()]
+    return [asset_dict(a) for a in db.scalars(stmt.order_by(Asset.asset_tag)).unique().all()]
 
 
 @app.get("/api/assets/summary")
 def asset_summary(user: User = Depends(require_roles(*STAFF_ROLES, Role.AUDITOR)), db: Session = Depends(get_db)):
-    statuses = db.execute(select(Asset.status, func.count(Asset.id)).group_by(Asset.status)).all()
-    return {"total": db.scalar(select(func.count(Asset.id))) or 0,
-            "assigned": db.scalar(select(func.count(Asset.id)).where(Asset.assigned_employee_id.is_not(None))) or 0,
-            "unassigned": db.scalar(select(func.count(Asset.id)).where(Asset.assigned_employee_id.is_(None))) or 0,
-            "warranty_expiring": db.scalar(select(func.count(Asset.id)).where(Asset.warranty_expiration.between(date.today(), date.today()+timedelta(days=90)))) or 0,
+    current = Asset.is_archived.is_(False)
+    statuses = db.execute(select(Asset.status, func.count(Asset.id)).where(current).group_by(Asset.status)).all()
+    return {"total": db.scalar(select(func.count(Asset.id)).where(current)) or 0,
+            "assigned": db.scalar(select(func.count(Asset.id)).where(current, Asset.assigned_employee_id.is_not(None))) or 0,
+            "unassigned": db.scalar(select(func.count(Asset.id)).where(current, Asset.assigned_employee_id.is_(None))) or 0,
+            "archived": db.scalar(select(func.count(Asset.id)).where(Asset.is_archived.is_(True))) or 0,
+            "warranty_expiring": db.scalar(select(func.count(Asset.id)).where(current, Asset.warranty_expiration.between(date.today(), date.today()+timedelta(days=90)))) or 0,
             "by_status": [{"label": label, "value": count} for label,count in statuses],
-            "inventory_source": "Northstar local inventory",
-            "integration_status": "Ready for Asset Inventory connector"}
+            "inventory_source": "Northstar Desk + AssetPilot", "integration_status": "Unified inventory"}
+
+
+@app.get("/api/assets/metadata")
+def asset_metadata(user: User = Depends(require_roles(*STAFF_ROLES, Role.AUDITOR)), db: Session = Depends(get_db)):
+    return {"employees": [{"id": e.id, "name": f"{e.preferred_name or e.first_name} {e.last_name}", "email": e.work_email, "employee_number": e.employee_number}
+                           for e in db.scalars(select(Employee).where(Employee.employment_status == "Active").order_by(Employee.last_name)).all()],
+            "departments": [{"id": d.id, "name": d.name} for d in db.scalars(select(Department).order_by(Department.name)).all()],
+            "locations": [{"id": item.id, "name": item.name} for item in db.scalars(select(Location).order_by(Location.name)).all()]}
+
+
+@app.get("/api/assets/import/assetpilot/preview")
+def preview_assetpilot(user: User = Depends(require_roles(Role.ADMIN, Role.MANAGER)), db: Session = Depends(get_db)):
+    try:
+        result = assetpilot_preview()
+        result["imported_assets"] = db.scalar(select(func.count(Asset.id)).where(Asset.source == "AssetPilot")) or 0
+        result["imported_employees"] = db.scalar(select(func.count(Employee.id)).where(Employee.source == "AssetPilot")) or 0
+        return result
+    except FileNotFoundError as exc: raise HTTPException(404, str(exc))
+
+
+@app.post("/api/assets/import/assetpilot")
+def run_assetpilot_import(user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    try: result = import_assetpilot(db, actor_id=user.id)
+    except FileNotFoundError as exc: raise HTTPException(404, str(exc))
+    audit(db, "assetpilot.imported", "inventory", None, user.id, new=result); db.commit(); return result
 
 
 @app.get("/api/assets/{asset_id}")
@@ -378,13 +424,11 @@ def asset_detail(asset_id: int, user: User = Depends(require_roles(*STAFF_ROLES,
     if not asset: raise HTTPException(404, "Asset not found")
     history = db.scalars(select(AssetHistory).where(AssetHistory.asset_id == asset.id).order_by(AssetHistory.created_at.desc())).all()
     related = db.scalars(select(Ticket).join(TicketAsset, Ticket.id == TicketAsset.ticket_id).where(TicketAsset.asset_id == asset.id, visible_ticket_filter(user)).order_by(Ticket.updated_at.desc())).all()
-    return {"id": asset.id, "asset_tag": asset.asset_tag, "hostname": asset.hostname, "serial_number": asset.serial_number,
-            "manufacturer": asset.manufacturer, "model": asset.model, "asset_type": asset.asset_type, "status": asset.status,
-            "condition": asset.condition, "notes": asset.notes, "purchase_date": asset.purchase_date,
-            "warranty_expiration": asset.warranty_expiration,
-            "employee": {"id": asset.assigned_employee.id, "name": f"{asset.assigned_employee.first_name} {asset.assigned_employee.last_name}", "email": asset.assigned_employee.work_email} if asset.assigned_employee else None,
-            "history": [{"id": h.id, "event_type": h.event_type, "previous": h.previous_value, "new": h.new_value, "created_at": h.created_at} for h in history],
-            "tickets": [ticket_dict(t) for t in related]}
+    result = asset_dict(asset, detail=True)
+    result.update({"employee": {"id": asset.assigned_employee.id, "name": f"{asset.assigned_employee.first_name} {asset.assigned_employee.last_name}", "email": asset.assigned_employee.work_email} if asset.assigned_employee else None,
+                   "history": [{"id": h.id, "event_type": h.event_type, "previous": h.previous_value, "new": h.new_value, "created_at": h.created_at} for h in history],
+                   "tickets": [ticket_dict(t) for t in related]})
+    return result
 
 
 @app.post("/api/assets", status_code=201)
@@ -396,10 +440,25 @@ def create_asset(payload: AssetCreate, user: User = Depends(require_roles(Role.A
     audit(db, "asset.created", "asset", asset.id, user.id, new={"asset_tag": asset.asset_tag}); db.commit(); return {"id": asset.id}
 
 
+@app.patch("/api/assets/{asset_id}")
+def update_asset(asset_id: int, payload: AssetUpdate, user: User = Depends(require_roles(Role.ADMIN, Role.MANAGER)), db: Session = Depends(get_db)):
+    asset = db.get(Asset, asset_id)
+    if not asset: raise HTTPException(404, "Asset not found")
+    changes = payload.model_dump(exclude_unset=True); previous = {key: getattr(asset, key) for key in changes}
+    for key,value in changes.items(): setattr(asset, key, value)
+    try: db.flush()
+    except IntegrityError: db.rollback(); raise HTTPException(409, "Asset tag, hostname, and serial number must be unique when provided")
+    serialized = payload.model_dump(mode="json", exclude_unset=True)
+    db.add(AssetHistory(asset_id=asset.id, event_type="updated", previous_value={k: str(v) if isinstance(v,date) else v for k,v in previous.items()}, new_value=serialized, actor_id=user.id))
+    audit(db, "asset.updated", "asset", asset.id, user.id, previous={k: str(v) for k,v in previous.items()}, new=serialized); db.commit()
+    return asset_dict(asset, detail=True)
+
+
 @app.post("/api/assets/{asset_id}/assign")
 def assign_asset(asset_id: int, payload: AssetAssign, user: User = Depends(require_roles(Role.ADMIN, Role.MANAGER, Role.TECHNICIAN, Role.TEAM_LEAD)), db: Session = Depends(get_db)):
     asset = db.get(Asset, asset_id)
     if not asset: raise HTTPException(404, "Asset not found")
+    if payload.employee_id is not None and not db.get(Employee, payload.employee_id): raise HTTPException(422, "Employee not found")
     previous = {"employee_id": asset.assigned_employee_id, "status": asset.status}
     asset.assigned_employee_id = payload.employee_id; asset.status = payload.status
     new = {"employee_id": payload.employee_id, "status": payload.status}

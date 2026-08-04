@@ -39,6 +39,19 @@ def test_asset_assignment_history(admin):
     with SessionLocal() as db: assert db.scalar(select(func.count(AssetHistory.id)).where(AssetHistory.asset_id==asset_id))>=2
 
 
+def test_asset_create_edit_metadata_and_return(admin):
+    payload={"asset_tag":"NATIVE-ASSET-001","name":"Native ITSM asset","manufacturer":"Dell","model":"Latitude","asset_type":"Laptop","category":"Computer","condition":"New"}
+    created=admin.post("/api/assets",json=payload);assert created.status_code==201
+    asset_id=created.json()["id"]
+    edited=admin.patch(f"/api/assets/{asset_id}",json={"vendor":"Example Vendor","purchase_cost_cents":150000,"status":"Active"})
+    assert edited.status_code==200 and edited.json()["vendor"]=="Example Vendor"
+    metadata=admin.get("/api/assets/metadata").json();assert metadata["employees"] and metadata["locations"]
+    employee_id=metadata["employees"][0]["id"]
+    assert admin.post(f"/api/assets/{asset_id}/assign",json={"employee_id":employee_id,"status":"Active"}).status_code==200
+    assert admin.post(f"/api/assets/{asset_id}/assign",json={"employee_id":None,"status":"Stock"}).status_code==200
+    detail=admin.get(f"/api/assets/{asset_id}").json();assert detail["employee"] is None and detail["status"]=="Stock"
+
+
 def test_automation_failure_resolution(admin):
     rows=admin.get("/api/admin/failures").json();open_item=next(x for x in rows if x["status"]=="Open")
     assert admin.post(f"/api/admin/failures/{open_item['id']}/resolve",json={"resolution_note":"Reviewed and corrected configuration."}).status_code==200

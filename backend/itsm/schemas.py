@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -72,13 +72,49 @@ class AssetCreate(BaseModel):
     asset_tag: str
     hostname: str | None = None
     serial_number: str | None = None
-    manufacturer: str
-    model: str
+    manufacturer: str = ""
+    model: str = ""
+    name: str = ""
+    category: str = "Computer"
     asset_type: str
     status: str = "Stock"
     condition: str = "Good"
     assigned_employee_id: int | None = None
+    location_id: int | None = None
+    department_id: int | None = None
+    purchase_date: date | None = None
+    purchase_cost_cents: int | None = None
+    warranty_expiration: date | None = None
+    vendor: str | None = None
+    purpose: str | None = None
+    company: str | None = None
+    project: str | None = None
+    mac_address: str | None = None
     notes: str = ""
+
+
+class AssetUpdate(BaseModel):
+    asset_tag: str | None = None
+    hostname: str | None = None
+    serial_number: str | None = None
+    manufacturer: str | None = None
+    model: str | None = None
+    name: str | None = None
+    category: str | None = None
+    asset_type: str | None = None
+    status: str | None = None
+    condition: str | None = None
+    location_id: int | None = None
+    department_id: int | None = None
+    purchase_date: date | None = None
+    purchase_cost_cents: int | None = None
+    warranty_expiration: date | None = None
+    vendor: str | None = None
+    purpose: str | None = None
+    company: str | None = None
+    project: str | None = None
+    mac_address: str | None = None
+    notes: str | None = None
 
 
 class AssetAssign(BaseModel):
