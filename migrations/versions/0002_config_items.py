@@ -12,9 +12,16 @@ depends_on = None
 def upgrade():
     bind = op.get_bind()
     inspector = sa.inspect(bind)
-    table = sa.table("config_items", sa.column("section", sa.String), sa.column("name", sa.String),
+    existing_tables = inspector.get_table_names()
+    if "organizations" in existing_tables and not bind.scalar(sa.text("SELECT COUNT(*) FROM organizations")):
+        bind.execute(sa.text("INSERT INTO organizations (id, name, slug, timezone, support_email, support_phone, logo_url, active, created_at, updated_at) "
+                             "VALUES (1, 'Primary Organization', 'primary', 'America/New_York', '', '', '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+    config_columns = {column["name"] for column in inspector.get_columns("config_items")} if "config_items" in existing_tables else set()
+    table_columns = ([sa.column("organization_id", sa.Integer)] if "organization_id" in config_columns else []) + [
+                     sa.column("section", sa.String), sa.column("name", sa.String),
                      sa.column("value", sa.JSON), sa.column("description", sa.String),
-                     sa.column("sensitive", sa.Boolean), sa.column("updated_at", sa.DateTime(timezone=True)))
+                     sa.column("sensitive", sa.Boolean), sa.column("updated_at", sa.DateTime(timezone=True))]
+    table = sa.table("config_items", *table_columns)
     if "config_items" not in inspector.get_table_names():
         op.create_table(
             "config_items",
@@ -44,6 +51,7 @@ def upgrade():
     timestamp = datetime.now(timezone.utc)
     for row in rows:
         row["updated_at"] = timestamp
+        if "organization_id" in config_columns: row["organization_id"] = 1
     op.bulk_insert(table, rows)
 
 

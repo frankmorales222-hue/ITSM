@@ -34,7 +34,7 @@ def upgrade():
             for column in missing:
                 batch.add_column(column)
     indexes = {index["name"] for index in sa.inspect(bind).get_indexes("assets")}
-    if "uq_assets_source_source_id" not in indexes:
+    if "organization_id" not in existing and "uq_assets_source_source_id" not in indexes:
         op.create_index("uq_assets_source_source_id", "assets", ["source", "source_id"], unique=True,
                         sqlite_where=sa.text("source_id IS NOT NULL"))
 

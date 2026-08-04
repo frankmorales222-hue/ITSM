@@ -3,8 +3,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
-from .models import (AuditEvent, AutomationFailure, ConfigItem, EmailMessage, Notification, Role, Sequence,
-                     SystemState, Team, Ticket, TicketHistory, TicketMessage, TicketStatus, User, now)
+from .models import (ApprovalWorkflow, AuditEvent, AutomationFailure, ConfigItem, EmailMessage, FormDefinition,
+                     Notification, Role, Sequence, SystemState, Team, Ticket, TicketHistory, TicketMessage,
+                     TicketStatus, User, now)
 
 PRIORITY_HOURS = {
     "Critical": (1, 4), "High": (4, 16), "Medium": (8, 40), "Low": (16, 80)
@@ -25,7 +26,8 @@ def audit(db: Session, action: str, record_type: str, record_id=None, actor_id=N
 
 
 def next_ticket_number(db: Session, request_type: str) -> str:
-    prefix = "INC" if request_type == "Report an issue" else "HR" if request_type == "New employee request" else "REQ"
+    lowered = request_type.lower()
+    prefix = "CHG" if "change" in lowered else "INC" if request_type == "Report an issue" or "incident" in lowered else "HR" if request_type == "New employee request" else "REQ"
     seq = db.get(Sequence, prefix)
     if not seq:
         seq = Sequence(prefix=prefix, value=0)
@@ -102,10 +104,87 @@ def visible_ticket_filter(user: User):
     return True
 
 
-def notify(db: Session, user_id: int | None, event: str, title: str, body: str, ticket_id=None):
+def notify(db: Session, user_id: int | None, event: str, title: str, body: str, ticket_id=None, email=False):
     if user_id:
-        db.add(Notification(user_id=user_id, ticket_id=ticket_id, event=event, title=title, body=body))
-        audit(db, "notification.created", "notification", ticket_id, new={"event": event, "user_id": user_id})
+        db.add(Notification(user_id=user_id, ticket_id=ticket_id, event=event, title=title, body=body,
+                            delivery_status="pending_email" if email else "in_app"))
+        audit(db, "notification.created", "notification", ticket_id,
+              new={"event": event, "user_id": user_id, "email_requested": email})
+
+
+FORM_FIELD_TYPES = {"short_text", "long_text", "select", "multi_select", "date", "number",
+                    "checkbox", "email", "asset", "user", "section"}
+
+
+def validate_form_fields(fields: list[dict]) -> list[dict]:
+    clean: list[dict] = []
+    keys: set[str] = set()
+    for index, raw in enumerate(fields):
+        field_type = str(raw.get("type", "short_text"))
+        key = str(raw.get("key", "")).strip().lower()
+        label = str(raw.get("label", "")).strip()
+        if field_type not in FORM_FIELD_TYPES:
+            raise ValueError(f"Unsupported field type at position {index + 1}")
+        if field_type != "section" and (not re.fullmatch(r"[a-z][a-z0-9_]{1,59}", key) or key in keys):
+            raise ValueError(f"Field {index + 1} needs a unique key using letters, numbers, and underscores")
+        if not label or len(label) > 160:
+            raise ValueError(f"Field {index + 1} needs a label")
+        options = [str(item).strip()[:120] for item in raw.get("options", []) if str(item).strip()]
+        if field_type in {"select", "multi_select"} and not options:
+            raise ValueError(f"{label} needs at least one option")
+        if field_type != "section":
+            keys.add(key)
+        clean.append({"id": str(raw.get("id") or uuid.uuid4()), "key": key, "label": label,
+                      "type": field_type, "required": bool(raw.get("required", False)),
+                      "help": str(raw.get("help", ""))[:500], "options": options})
+    return clean
+
+
+def validate_form_submission(form: FormDefinition, values: dict) -> dict:
+    result: dict = {}
+    allowed = {field["key"]: field for field in form.fields if field.get("type") != "section"}
+    for key, field in allowed.items():
+        value = values.get(key)
+        empty = value is None or value == "" or value == []
+        if field.get("required") and empty:
+            raise ValueError(f"{field['label']} is required")
+        if empty:
+            continue
+        field_type = field["type"]
+        if field_type == "checkbox":
+            result[key] = bool(value)
+        elif field_type == "number":
+            try: result[key] = float(value)
+            except (TypeError, ValueError): raise ValueError(f"{field['label']} must be a number")
+        elif field_type == "email":
+            text_value = str(value).strip()
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text_value):
+                raise ValueError(f"{field['label']} must be an email address")
+            result[key] = text_value[:255]
+        elif field_type == "multi_select":
+            selected = value if isinstance(value, list) else [value]
+            if any(item not in field.get("options", []) for item in selected):
+                raise ValueError(f"{field['label']} contains an invalid option")
+            result[key] = selected
+        elif field_type == "select":
+            if value not in field.get("options", []): raise ValueError(f"{field['label']} contains an invalid option")
+            result[key] = value
+        else:
+            result[key] = str(value)[:20000 if field_type == "long_text" else 500]
+    return result
+
+
+def workflow_approver(db: Session, workflow: ApprovalWorkflow, step_index: int) -> User | None:
+    if step_index >= len(workflow.steps):
+        return None
+    step = workflow.steps[step_index]
+    if step.get("approver_user_id"):
+        user = db.get(User, int(step["approver_user_id"]))
+        return user if user and user.active else None
+    role_name = step.get("approver_role", "manager")
+    try: role = Role(role_name)
+    except ValueError: return None
+    return db.scalar(select(User).where(User.role == role, User.active.is_(True)).order_by(User.id))
 
 
 def sensitive_warnings(text: str) -> list[str]:

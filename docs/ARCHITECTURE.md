@@ -1,5 +1,11 @@
 # Architecture
 
+## Configurable service layer
+
+Northstar Studio stores organization-owned form definitions as validated JSON field schemas. Ticket submissions retain both the form reference and a JSON snapshot of submitted values, so forms can evolve without changing historical records. Approval workflows resolve sequential steps to an active role or named user, while approval requests and append-only decisions preserve the operational history. Saved report definitions contain only whitelisted columns, filters, and grouping instructions; the server constructs authorized queries and never accepts report-authored SQL.
+
+Approval email uses the existing notification outbox. The API records `pending_email` notifications transactionally with the approval decision, and the background worker delivers them through organization-configured SMTP credentials held in Windows Credential Manager. Failed delivery becomes a visible automation exception.
+
 Northstar Desk uses a layered modular-monolith architecture appropriate for the first internally hosted release.
 
 ## Runtime

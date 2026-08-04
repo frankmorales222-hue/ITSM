@@ -1,6 +1,7 @@
 import csv
 import enum
 import io
+import os
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -98,6 +99,7 @@ def ticket_dict(ticket: Ticket, detail=False):
             "first_responded_at": ticket.first_responded_at, "resolved_at": ticket.resolved_at,
             "resolution_summary": ticket.resolution_summary, "reopened_count": ticket.reopened_count,
             "created_at": ticket.created_at, "updated_at": ticket.updated_at,
+            "form_definition_id": ticket.form_definition_id,
             "sla_state": "breached" if aware(ticket.resolution_due) < now() and ticket.status not in (TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED)
                          else "warning" if aware(ticket.resolution_due) < now() + timedelta(hours=4) and ticket.status not in (TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED)
                          else "on_track"}
@@ -106,6 +108,10 @@ def ticket_dict(ticket: Ticket, detail=False):
         data["messages"] = [{"id": m.id, "body": m.body, "kind": m.kind, "source": m.source,
                              "author": m.author.display_name if m.author else "Email requester", "created_at": m.created_at}
                             for m in sorted(ticket.messages, key=lambda x: x.created_at)]
+        data["custom_data"] = ticket.custom_data or {}
+        if ticket.form_definition_id:
+            form = getattr(ticket, "_form_definition", None)
+            data["form"] = {"id": form.id, "name": form.name, "fields": form.fields} if form else None
     return data
 
 
@@ -243,6 +249,8 @@ def ticket_counts(user: User = Depends(current_user), db: Session = Depends(get_
 
 @app.post("/api/tickets", status_code=201)
 def create_ticket(payload: TicketCreate, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if payload.form_definition_id:
+        raise HTTPException(422, "Custom forms must be submitted through the form submission endpoint")
     warnings = sensitive_warnings(payload.subject + " " + payload.description)
     priority = priority_for(payload.impact, payload.urgency)
     category = {"Request access": "Access", "Request software": "Software", "Request equipment": "Hardware",
@@ -283,6 +291,12 @@ def get_ticket(ticket_id: int, user: User = Depends(current_user), db: Session =
     if not ticket or not can_view_ticket(user, ticket): raise HTTPException(404, "Ticket not found")
     history = db.scalars(select(TicketHistory).where(TicketHistory.ticket_id == ticket.id).order_by(TicketHistory.created_at)).all()
     result = ticket_dict(ticket, True)
+    if ticket.form_definition_id:
+        form = db.get(FormDefinition, ticket.form_definition_id)
+        result["form"] = {"id": form.id, "name": form.name, "fields": form.fields} if form else None
+    approval = db.scalar(select(ApprovalRequest).where(ApprovalRequest.ticket_id == ticket.id))
+    if approval:
+        result["approval"] = approval_dict(approval, db)
     if user.role != Role.END_USER:
         result["history"] = [{"event_type": h.event_type, "previous": h.previous_value, "new": h.new_value,
                               "reason": h.reason, "created_at": h.created_at} for h in history]
@@ -694,14 +708,20 @@ def health(user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depend
     migration = "unknown"
     try: migration = db.execute(text("SELECT version_num FROM alembic_version")).scalar() or "none"
     except Exception: pass
+    backup_files = sorted((path for pattern in ("itsm-*.sqlite", "itsm-*.dump", "itsm-*.db")
+                           for path in Path(settings.backup_directory).glob(pattern)), key=lambda path: path.stat().st_mtime, reverse=True)
+    latest_backup = backup_files[0] if backup_files else None
     return {"application": "Operational", "database": "Connected" if db_ok else "Unavailable",
             "mailbox": (mail_state.value if mail_state else {"status": "Not configured"}),
             "worker": (worker_state.value if worker_state else {"status": "Not running"}),
             "migration_version": migration, "version": __version__, "uptime_seconds": int((now()-started_at).total_seconds()),
             "open_automation_failures": db.scalar(select(func.count(AutomationFailure.id)).where(AutomationFailure.status == "Open")) or 0,
             "notification_failures": db.scalar(select(func.count(Notification.id)).where(Notification.delivery_status == "failed")) or 0,
+            "notification_email_pending": db.scalar(select(func.count(Notification.id)).where(Notification.delivery_status == "pending_email")) or 0,
+            "smtp": {"status": "Configured" if os.getenv("ITSM_SMTP_HOST") else "Not configured"},
             "storage": {"database_bytes": Path("data/itsm.db").stat().st_size if Path("data/itsm.db").exists() else 0},
-            "backup": {"status": "Not configured", "note": "Configure scheduled database backups before production use"}}
+            "backup": {"status": "Available" if latest_backup else "Not configured",
+                       "latest": latest_backup.name if latest_backup else None}}
 
 
 @app.post("/api/feedback", status_code=201)
@@ -709,6 +729,319 @@ def feedback(payload: FeedbackIn, user: User = Depends(current_user), db: Sessio
     item = Feedback(user_id=user.id, feedback_type=payload.feedback_type, current_page=payload.current_page,
                     user_role=user.role.value, app_version=__version__, related_record_id=payload.related_record_id, text=payload.text)
     db.add(item); audit(db, "feedback.created", "feedback", None, user.id, new={"type": payload.feedback_type}); db.commit(); return {"ok": True}
+
+
+def form_dict(form: FormDefinition):
+    return {"id": form.id, "slug": form.slug, "name": form.name, "description": form.description,
+            "category": form.category, "icon": form.icon, "fields": form.fields or [], "active": form.active,
+            "published": form.published, "created_at": form.created_at, "updated_at": form.updated_at}
+
+
+@app.get("/api/forms")
+def published_forms(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.scalars(select(FormDefinition).where(FormDefinition.active.is_(True), FormDefinition.published.is_(True))
+                      .order_by(FormDefinition.name)).all()
+    return [form_dict(row) for row in rows]
+
+
+@app.get("/api/admin/forms")
+def admin_forms(user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    return [form_dict(row) for row in db.scalars(select(FormDefinition).order_by(FormDefinition.name)).all()]
+
+
+@app.post("/api/admin/forms", status_code=201)
+def create_form(payload: FormDefinitionIn, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    try: fields = validate_form_fields(payload.fields)
+    except ValueError as exc: raise HTTPException(422, str(exc))
+    form = FormDefinition(**payload.model_dump(exclude={"fields"}), fields=fields)
+    db.add(form)
+    try: db.flush()
+    except IntegrityError: db.rollback(); raise HTTPException(409, "A form with this key already exists")
+    audit(db, "form.created", "form_definition", form.id, user.id, new={"name": form.name, "published": form.published})
+    db.commit(); db.refresh(form); return form_dict(form)
+
+
+@app.patch("/api/admin/forms/{form_id}")
+def update_form(form_id: int, payload: FormDefinitionIn, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    form = db.get(FormDefinition, form_id)
+    if not form: raise HTTPException(404, "Form not found")
+    try: fields = validate_form_fields(payload.fields)
+    except ValueError as exc: raise HTTPException(422, str(exc))
+    previous = form_dict(form)
+    for key, value in payload.model_dump(exclude={"fields"}).items(): setattr(form, key, value)
+    form.fields = fields
+    audit(db, "form.updated", "form_definition", form.id, user.id, previous=previous,
+          new={"name": form.name, "published": form.published, "field_count": len(fields)})
+    try: db.commit()
+    except IntegrityError: db.rollback(); raise HTTPException(409, "A form with this key already exists")
+    return form_dict(form)
+
+
+def approval_dict(item: ApprovalRequest, db: Session):
+    ticket = db.get(Ticket, item.ticket_id); workflow = db.get(ApprovalWorkflow, item.workflow_id)
+    approver = db.get(User, item.current_approver_id) if item.current_approver_id else None
+    requester = db.get(User, item.requested_by_id)
+    decisions = db.scalars(select(ApprovalDecision).where(ApprovalDecision.approval_request_id == item.id)
+                           .order_by(ApprovalDecision.created_at)).all()
+    return {"id": item.id, "status": item.status, "current_step": item.current_step,
+            "step_name": workflow.steps[item.current_step].get("name", f"Step {item.current_step + 1}") if workflow and item.current_step < len(workflow.steps) else "Complete",
+            "workflow": workflow.name if workflow else "Approval", "ticket_id": ticket.id if ticket else None,
+            "ticket_number": ticket.number if ticket else None, "subject": ticket.subject if ticket else None,
+            "requester": requester.display_name if requester else None,
+            "approver": approver.display_name if approver else "Unassigned approver",
+            "created_at": item.created_at, "updated_at": item.updated_at,
+            "decisions": [{"step_index": d.step_index, "decision": d.decision, "comment": d.comment,
+                           "approver": db.get(User, d.approver_id).display_name, "created_at": d.created_at} for d in decisions]}
+
+
+@app.post("/api/forms/{form_id}/submit", status_code=201)
+def submit_form(form_id: int, payload: FormSubmissionIn, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    form = db.get(FormDefinition, form_id)
+    if not form or not form.active or not form.published: raise HTTPException(404, "Form not found")
+    try: values = validate_form_submission(form, payload.values)
+    except ValueError as exc: raise HTTPException(422, str(exc))
+    requester = user
+    if payload.requester_id and payload.requester_id != user.id:
+        if user.role not in STAFF_ROLES: raise HTTPException(403, "Only IT staff can submit for another user")
+        requester = db.get(User, payload.requester_id)
+        if not requester or not requester.active: raise HTTPException(422, "Requester is not active")
+    employee = db.scalar(select(Employee).where(Employee.user_id == requester.id))
+    team, tech, reason = route_ticket(db, form.category, requester)
+    priority = priority_for(payload.impact, payload.urgency); first_due, resolution_due = sla_dates(priority)
+    description_lines = []
+    for field in form.fields:
+        if field.get("type") != "section" and field.get("key") in values:
+            value = values[field["key"]]
+            description_lines.append(f"{field['label']}: {', '.join(map(str, value)) if isinstance(value, list) else value}")
+    ticket = Ticket(number=next_ticket_number(db, form.name), request_type=form.name, subject=payload.subject,
+                    description="\n".join(description_lines) or payload.subject, requester_id=requester.id,
+                    employee_id=employee.id if employee else None, team_id=team.id,
+                    assigned_user_id=tech.id if tech else None, status=TicketStatus.ASSIGNED if tech else TicketStatus.NEW,
+                    priority=priority, impact=payload.impact, urgency=payload.urgency, category=form.category,
+                    route_reason=reason, first_response_due=first_due, resolution_due=resolution_due,
+                    form_definition_id=form.id, custom_data=values)
+    if payload.asset_ids:
+        ticket.assets = db.scalars(select(Asset).where(Asset.id.in_(payload.asset_ids))).all()
+    db.add(ticket); db.flush()
+    db.add(TicketMessage(ticket_id=ticket.id, author_id=user.id, body=ticket.description, kind="public"))
+    db.add(TicketHistory(ticket_id=ticket.id, event_type="created_from_form", actor_id=user.id,
+                         new_value={"form": form.name, "status": ticket.status.value}))
+    workflow = db.scalar(select(ApprovalWorkflow).where(ApprovalWorkflow.form_definition_id == form.id,
+                                                        ApprovalWorkflow.active.is_(True)))
+    if workflow:
+        approver = workflow_approver(db, workflow, 0)
+        ticket.status = TicketStatus.WAITING_APPROVAL; ticket.next_action_owner = "Approver"
+        ticket.next_action = workflow.steps[0].get("name", "Review request")
+        approval = ApprovalRequest(ticket_id=ticket.id, workflow_id=workflow.id, requested_by_id=requester.id,
+                                   current_approver_id=approver.id if approver else None)
+        db.add(approval); db.flush()
+        notify(db, approver.id if approver else None, "approval.requested", f"Approval needed: {ticket.number}",
+               f"{requester.display_name} submitted {form.name}: {ticket.subject}", ticket.id, email=True)
+        if not approver:
+            fail_automation(db, "approval_routing", "Approval step has no eligible approver",
+                            {"ticket_number": ticket.number, "workflow": workflow.name}, "approval", approval.id)
+    notify(db, requester.id, "ticket.created", f"{ticket.number} created", "Your form was submitted successfully.", ticket.id, email=True)
+    audit(db, "form.submitted", "ticket", ticket.id, user.id, new={"form_id": form.id, "approval": bool(workflow)},
+          source_ip=request.client.host if request.client else None)
+    db.commit(); db.refresh(ticket)
+    return {"ticket": ticket_dict(ticket, True), "approval_required": bool(workflow)}
+
+
+@app.get("/api/admin/approval-workflows")
+def approval_workflows(user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    rows = db.scalars(select(ApprovalWorkflow).order_by(ApprovalWorkflow.name)).all()
+    return [{"id": row.id, "name": row.name, "form_definition_id": row.form_definition_id,
+             "steps": row.steps, "active": row.active} for row in rows]
+
+
+@app.post("/api/admin/approval-workflows", status_code=201)
+def create_approval_workflow(payload: ApprovalWorkflowIn, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    form = db.get(FormDefinition, payload.form_definition_id)
+    if not form: raise HTTPException(422, "Form not found")
+    if db.scalar(select(ApprovalWorkflow).where(ApprovalWorkflow.form_definition_id == form.id)):
+        raise HTTPException(409, "This form already has an approval workflow")
+    steps = []
+    for index, raw in enumerate(payload.steps):
+        name = str(raw.get("name", "")).strip()
+        role = str(raw.get("approver_role", "manager"))
+        user_id = raw.get("approver_user_id")
+        if not name: raise HTTPException(422, f"Approval step {index + 1} needs a name")
+        if user_id and not db.get(User, int(user_id)): raise HTTPException(422, f"Approver for step {index + 1} was not found")
+        if not user_id:
+            try: Role(role)
+            except ValueError: raise HTTPException(422, f"Approval role for step {index + 1} is invalid")
+        steps.append({"name": name[:160], "approver_role": role, "approver_user_id": int(user_id) if user_id else None})
+    workflow = ApprovalWorkflow(name=payload.name, form_definition_id=form.id, steps=steps, active=payload.active)
+    db.add(workflow); db.flush(); audit(db, "approval_workflow.created", "approval_workflow", workflow.id, user.id,
+                                       new={"form": form.name, "steps": len(steps)})
+    db.commit(); return {"id": workflow.id, "name": workflow.name, "form_definition_id": workflow.form_definition_id,
+                         "steps": workflow.steps, "active": workflow.active}
+
+
+@app.patch("/api/admin/approval-workflows/{workflow_id}")
+def update_approval_workflow(workflow_id: int, payload: ApprovalWorkflowIn, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    workflow = db.get(ApprovalWorkflow, workflow_id)
+    if not workflow: raise HTTPException(404, "Workflow not found")
+    if payload.form_definition_id != workflow.form_definition_id: raise HTTPException(422, "Workflow form cannot be changed")
+    steps = []
+    for index, raw in enumerate(payload.steps):
+        name = str(raw.get("name", "")).strip(); role = str(raw.get("approver_role", "manager")); user_id = raw.get("approver_user_id")
+        if not name: raise HTTPException(422, f"Approval step {index + 1} needs a name")
+        if user_id and not db.get(User, int(user_id)): raise HTTPException(422, f"Approver for step {index + 1} was not found")
+        if not user_id:
+            try: Role(role)
+            except ValueError: raise HTTPException(422, f"Approval role for step {index + 1} is invalid")
+        steps.append({"name": name[:160], "approver_role": role, "approver_user_id": int(user_id) if user_id else None})
+    previous = {"name": workflow.name, "steps": workflow.steps, "active": workflow.active}
+    workflow.name = payload.name; workflow.steps = steps; workflow.active = payload.active
+    audit(db, "approval_workflow.updated", "approval_workflow", workflow.id, user.id, previous, {"name": workflow.name, "steps": steps, "active": workflow.active})
+    db.commit(); return {"ok": True}
+
+
+@app.get("/api/approvals")
+def approval_queue(status: str = "Pending", user: User = Depends(require_roles(*STAFF_ROLES, Role.AUDITOR)), db: Session = Depends(get_db)):
+    stmt = select(ApprovalRequest)
+    if status != "all": stmt = stmt.where(ApprovalRequest.status == status)
+    if user.role not in (Role.ADMIN, Role.MANAGER, Role.AUDITOR): stmt = stmt.where(ApprovalRequest.current_approver_id == user.id)
+    return [approval_dict(item, db) for item in db.scalars(stmt.order_by(ApprovalRequest.updated_at.desc())).all()]
+
+
+@app.post("/api/approvals/{approval_id}/decision")
+def decide_approval(approval_id: int, payload: ApprovalDecisionIn, user: User = Depends(require_roles(*STAFF_ROLES)), db: Session = Depends(get_db)):
+    item = db.get(ApprovalRequest, approval_id)
+    if not item or item.status != "Pending": raise HTTPException(404, "Pending approval not found")
+    if item.current_approver_id != user.id and user.role != Role.ADMIN: raise HTTPException(403, "This approval is assigned to another approver")
+    workflow = db.get(ApprovalWorkflow, item.workflow_id); ticket = db.get(Ticket, item.ticket_id)
+    db.add(ApprovalDecision(approval_request_id=item.id, step_index=item.current_step,
+                            approver_id=user.id, decision=payload.decision, comment=payload.comment))
+    if payload.decision == "Rejected":
+        item.status = "Rejected"; item.completed_at = now(); ticket.status = TicketStatus.CANCELLED
+        ticket.next_action_owner = "Requester"; ticket.next_action = "Review rejection decision"
+        notify(db, item.requested_by_id, "approval.rejected", f"{ticket.number} was rejected",
+               payload.comment or "The request was not approved.", ticket.id, email=True)
+    elif item.current_step + 1 < len(workflow.steps):
+        item.current_step += 1; next_approver = workflow_approver(db, workflow, item.current_step)
+        item.current_approver_id = next_approver.id if next_approver else None
+        ticket.next_action = workflow.steps[item.current_step].get("name", "Review request")
+        notify(db, next_approver.id if next_approver else None, "approval.requested", f"Approval needed: {ticket.number}",
+               f"{user.display_name} approved the previous step. {ticket.subject}", ticket.id, email=True)
+        if not next_approver: fail_automation(db, "approval_routing", "Approval step has no eligible approver",
+                                              {"ticket_number": ticket.number, "step": item.current_step + 1}, "approval", item.id)
+    else:
+        item.status = "Approved"; item.completed_at = now(); item.current_approver_id = None
+        ticket.status = TicketStatus.ASSIGNED if ticket.assigned_user_id else TicketStatus.NEW
+        ticket.next_action_owner = "IT"; ticket.next_action = "Begin approved work"
+        notify(db, item.requested_by_id, "approval.approved", f"{ticket.number} was approved",
+               payload.comment or "All approval steps are complete.", ticket.id, email=True)
+        notify(db, ticket.assigned_user_id, "ticket.approved", f"Approved work: {ticket.number}", ticket.subject, ticket.id, email=True)
+    db.add(TicketHistory(ticket_id=ticket.id, event_type=f"approval_{payload.decision.lower()}", actor_id=user.id,
+                         new_value={"step": item.current_step, "comment": payload.comment}))
+    audit(db, f"approval.{payload.decision.lower()}", "approval_request", item.id, user.id,
+          new={"ticket_id": ticket.id, "step": item.current_step, "comment": payload.comment})
+    db.commit(); return approval_dict(item, db)
+
+
+REPORT_COLUMNS = {"number", "subject", "requester", "requester_email", "status", "priority", "category",
+                  "team", "assigned_user", "created_at", "updated_at", "resolved_at", "request_type"}
+
+
+def validate_report_configuration(configuration: dict) -> dict:
+    columns = configuration.get("columns") or ["number", "subject", "status", "priority"]
+    filters = configuration.get("filters") or []
+    group_by = configuration.get("group_by") or ""
+    def valid_field(value): return value in REPORT_COLUMNS or (isinstance(value, str) and value.startswith("custom.") and len(value) <= 80)
+    if len(columns) > 30 or any(not valid_field(item) for item in columns): raise HTTPException(422, "Report contains an unsupported column")
+    if len(filters) > 20 or any(not valid_field(item.get("field")) or item.get("operator") not in {"equals", "not_equals", "contains", "one_of"} for item in filters):
+        raise HTTPException(422, "Report contains an unsupported filter")
+    if group_by and not valid_field(group_by): raise HTTPException(422, "Report group is unsupported")
+    return {"columns": columns, "filters": filters, "group_by": group_by}
+
+
+def report_definition_dict(row: ReportDefinition):
+    return {"id": row.id, "name": row.name, "description": row.description,
+            "configuration": row.configuration, "active": row.active, "updated_at": row.updated_at}
+
+
+@app.get("/api/reports/definitions")
+def report_definitions(user: User = Depends(require_roles(*REPORT_ROLES)), db: Session = Depends(get_db)):
+    return [report_definition_dict(row) for row in db.scalars(select(ReportDefinition).where(ReportDefinition.active.is_(True)).order_by(ReportDefinition.name)).all()]
+
+
+@app.get("/api/admin/report-definitions")
+def admin_report_definitions(user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    return [report_definition_dict(row) for row in db.scalars(select(ReportDefinition).order_by(ReportDefinition.name)).all()]
+
+
+@app.post("/api/admin/report-definitions", status_code=201)
+def create_report_definition(payload: ReportDefinitionIn, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    config = validate_report_configuration(payload.configuration)
+    row = ReportDefinition(name=payload.name, description=payload.description, configuration=config,
+                           created_by_id=user.id, active=payload.active)
+    db.add(row)
+    try: db.flush()
+    except IntegrityError: db.rollback(); raise HTTPException(409, "A report with this name already exists")
+    audit(db, "report.created", "report_definition", row.id, user.id, new={"name": row.name})
+    db.commit(); return report_definition_dict(row)
+
+
+@app.patch("/api/admin/report-definitions/{report_id}")
+def update_report_definition(report_id: int, payload: ReportDefinitionIn, user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    row = db.get(ReportDefinition, report_id)
+    if not row: raise HTTPException(404, "Report not found")
+    previous = report_definition_dict(row); row.name = payload.name; row.description = payload.description
+    row.configuration = validate_report_configuration(payload.configuration); row.active = payload.active
+    audit(db, "report.updated", "report_definition", row.id, user.id, previous, {"name": row.name})
+    try: db.commit()
+    except IntegrityError: db.rollback(); raise HTTPException(409, "A report with this name already exists")
+    return report_definition_dict(row)
+
+
+def execute_report_definition(row: ReportDefinition, user: User, db: Session):
+    config = validate_report_configuration(row.configuration)
+    tickets = db.scalars(select(Ticket).where(visible_ticket_filter(user)).order_by(Ticket.created_at.desc()).limit(5000)).all()
+    records = []; matched_records = []
+    for ticket in tickets:
+        record = ticket_dict(ticket)
+        record["request_type"] = ticket.request_type; record["resolved_at"] = ticket.resolved_at
+        for key, value in (ticket.custom_data or {}).items(): record[f"custom.{key}"] = value
+        matches = True
+        for item in config["filters"]:
+            actual = record.get(item["field"]); expected = item.get("value", ""); operator = item["operator"]
+            if operator == "equals": matches = str(actual).lower() == str(expected).lower()
+            elif operator == "not_equals": matches = str(actual).lower() != str(expected).lower()
+            elif operator == "contains": matches = str(expected).lower() in str(actual).lower()
+            else: matches = str(actual) in ([str(v) for v in expected] if isinstance(expected, list) else [v.strip() for v in str(expected).split(",")])
+            if not matches: break
+        if matches:
+            matched_records.append(record)
+            records.append({column: record.get(column) for column in config["columns"]})
+    groups = []
+    if config["group_by"]:
+        counts = {}
+        for record in matched_records:
+            value = str(record.get(config["group_by"]) or "Not set"); counts[value] = counts.get(value, 0) + 1
+        groups = [{"label": key, "count": value} for key,value in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
+    return {"report": report_definition_dict(row), "columns": config["columns"], "rows": records[:1000], "matching": len(records), "groups": groups}
+
+
+@app.get("/api/reports/{report_id}/run")
+def run_custom_report(report_id: int, user: User = Depends(require_roles(*REPORT_ROLES)), db: Session = Depends(get_db)):
+    row = db.get(ReportDefinition, report_id)
+    if not row or not row.active: raise HTTPException(404, "Report not found")
+    audit(db, "report.executed", "report_definition", row.id, user.id); db.commit()
+    return execute_report_definition(row, user, db)
+
+
+@app.get("/api/reports/{report_id}/csv")
+def custom_report_csv(report_id: int, user: User = Depends(require_roles(*REPORT_ROLES)), db: Session = Depends(get_db)):
+    row = db.get(ReportDefinition, report_id)
+    if not row or not row.active: raise HTTPException(404, "Report not found")
+    result = execute_report_definition(row, user, db); output = io.StringIO(); writer = csv.writer(output)
+    writer.writerow(result["columns"])
+    for item in result["rows"]: writer.writerow([item.get(column, "") for column in result["columns"]])
+    filename = re.sub(r"[^a-z0-9]+", "-", row.name.lower()).strip("-") or "custom-report"
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": f"attachment; filename={filename}.csv"})
 
 
 @app.post("/api/email/ingest")

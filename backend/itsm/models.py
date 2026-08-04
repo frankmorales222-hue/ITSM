@@ -211,6 +211,8 @@ class Ticket(OrganizationMixin, Base, TimestampMixin):
     restricted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     reopened_count: Mapped[int] = mapped_column(Integer, default=0)
     route_reason: Mapped[str] = mapped_column(String(240), default="Default queue fallback")
+    form_definition_id: Mapped[int | None] = mapped_column(ForeignKey("form_definitions.id"), nullable=True, index=True)
+    custom_data: Mapped[dict] = mapped_column(JSON, default=dict)
     requester: Mapped[User] = relationship(foreign_keys=[requester_id])
     employee: Mapped[Employee | None] = relationship(foreign_keys=[employee_id])
     assigned_user: Mapped[User | None] = relationship(foreign_keys=[assigned_user_id])
@@ -369,3 +371,60 @@ class IntegrationSecret(OrganizationMixin, Base):
     name: Mapped[str] = mapped_column(String(100))
     encrypted_value: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class FormDefinition(OrganizationMixin, Base, TimestampMixin):
+    __tablename__ = "form_definitions"
+    __table_args__ = (UniqueConstraint("organization_id", "slug"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str] = mapped_column(String(100), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(String(1000), default="")
+    category: Mapped[str] = mapped_column(String(100), default="General")
+    icon: Mapped[str] = mapped_column(String(30), default="form")
+    fields: Mapped[list] = mapped_column(JSON, default=list)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    published: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+
+class ApprovalWorkflow(OrganizationMixin, Base, TimestampMixin):
+    __tablename__ = "approval_workflows"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160))
+    form_definition_id: Mapped[int] = mapped_column(ForeignKey("form_definitions.id"), unique=True, index=True)
+    steps: Mapped[list] = mapped_column(JSON, default=list)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ApprovalRequest(OrganizationMixin, Base, TimestampMixin):
+    __tablename__ = "approval_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), unique=True, index=True)
+    workflow_id: Mapped[int] = mapped_column(ForeignKey("approval_workflows.id"), index=True)
+    requested_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    current_approver_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    current_step: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(30), default="Pending", index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ApprovalDecision(OrganizationMixin, Base):
+    __tablename__ = "approval_decisions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    approval_request_id: Mapped[int] = mapped_column(ForeignKey("approval_requests.id"), index=True)
+    step_index: Mapped[int] = mapped_column(Integer)
+    approver_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    decision: Mapped[str] = mapped_column(String(30))
+    comment: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ReportDefinition(OrganizationMixin, Base, TimestampMixin):
+    __tablename__ = "report_definitions"
+    __table_args__ = (UniqueConstraint("organization_id", "name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(String(1000), default="")
+    configuration: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)

@@ -1,5 +1,17 @@
 # Manual acceptance checklist
 
+## Studio, approvals, and custom reporting
+
+- [ ] Administrator creates a draft form by dragging or clicking fields, reorders fields, publishes it, and sees it in the service catalog.
+- [ ] Required fields and configured choices are enforced on submission.
+- [ ] Incident Report creates an `INC-` ticket and Change Management creates a `CHG-` ticket.
+- [ ] Submitting Change Management places the ticket in Waiting on Approval and adds it to the assigned manager's approval inbox.
+- [ ] Approver records a comment and approves; requester receives an in-app notification and queued email, and the ticket returns to IT work.
+- [ ] Approver rejects a test request; requester is notified and the ticket is cancelled with decision history retained.
+- [ ] SMTP delivery succeeds under the background-worker account and a forced delivery failure appears in Automation failures without exposing credentials.
+- [ ] Administrator creates a saved report using both standard ticket fields and a custom form field.
+- [ ] Manager searches for, runs, groups, and exports the saved report; restricted records remain hidden from unauthorized roles.
+
 ## Installation and identity
 
 - [ ] Fresh Windows installation completes with `scripts\install.ps1`.
@@ -36,4 +48,3 @@
 - [ ] Every privileged action creates an append-only audit event.
 - [ ] Worker/mail/database/migration state appears on health.
 - [ ] Failed automation appears in the exception queue and can be resolved with a note.
-

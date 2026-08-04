@@ -1,6 +1,6 @@
 # Northstar Desk
 
-Northstar Desk is a locally hosted, browser-based IT service management application for internal technology teams. This first operational version includes self-service, technician queues, manager reporting, administration, local authentication, IMAP email intake, notifications, employees, assets, audit records, health monitoring, and an automation exception queue.
+Northstar Desk is a locally hosted, browser-based IT service management application for internal technology teams. It includes self-service, technician and approval queues, a drag-and-drop form Studio, saved custom reports, manager reporting, administration, local authentication, email intake and notifications, employees, assets, audit records, health monitoring, and an automation exception queue.
 
 ## Quick start on Windows
 
@@ -39,6 +39,7 @@ These are test-only identities using the reserved `.test` domain. Replace or dis
 - `scripts\migrate-to-postgres.ps1`: securely prompt for PostgreSQL credentials, then back up and transfer the local SQLite database to an empty PostgreSQL database.
 - `scripts\reset-demo.ps1 -Confirm`: destructively recreate demo data.
 - `scripts\configure-mail-secret.ps1 -Username support@example.org`: store the IMAP secret in Windows Credential Manager.
+- `scripts\configure-smtp-secret.ps1 -Username support@example.org`: store the outbound email secret used by approvals and notifications.
 - `scripts\start-dev.ps1`: run backend and frontend development servers.
 
-See [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md), [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md), [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md), and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for operating guidance.
+See [docs/STUDIO_GUIDE.md](docs/STUDIO_GUIDE.md), [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md), [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md), [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md), and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for operating guidance.

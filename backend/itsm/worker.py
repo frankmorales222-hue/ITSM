@@ -7,15 +7,18 @@ import email
 import imaplib
 import os
 import re
+import smtplib
 import time
 from datetime import timedelta
 from email.header import decode_header, make_header
 from email.policy import default
+from email.message import EmailMessage as OutboundEmail
 import keyring
 from sqlalchemy import select
 from .database import SessionLocal
 from .models import EmailMessage, Notification, Organization, Role, SystemState, Ticket, TicketMessage, TicketStatus, User, now
 from .services import audit, fail_automation, is_automated_email, next_ticket_number, notify, route_ticket, sla_dates
+from .config import settings
 
 
 def text_body(message):
@@ -77,12 +80,54 @@ def sla_job(db):
             notify(db,ticket.assigned_user_id,event,f"{ticket.number} {'breached' if event.endswith('breached') else 'approaching'} SLA",ticket.subject,ticket.id)
 
 
+def email_notification_job(db):
+    host = os.getenv("ITSM_SMTP_HOST")
+    if not host:
+        return 0
+    port = int(os.getenv("ITSM_SMTP_PORT", "587")); username = os.getenv("ITSM_SMTP_USERNAME", "")
+    sender = os.getenv("ITSM_SMTP_FROM", username); use_tls = os.getenv("ITSM_SMTP_USE_TLS", "true").lower() == "true"
+    target = os.getenv("ITSM_SMTP_SECRET_TARGET", "NorthstarDesk/smtp")
+    password = keyring.get_password(target, username) if username else None
+    if username and not password:
+        raise RuntimeError("SMTP credential is not available in Windows Credential Manager")
+    pending = db.scalars(select(Notification).where(Notification.delivery_status == "pending_email")
+                         .order_by(Notification.created_at).limit(50)).all()
+    if not pending:
+        return 0
+    delivered = 0
+    with smtplib.SMTP(host, port, timeout=30) as client:
+        if use_tls: client.starttls()
+        if username: client.login(username, password)
+        for notification in pending:
+            recipient = db.get(User, notification.user_id)
+            if not recipient or not recipient.email:
+                notification.delivery_status = "failed"
+                fail_automation(db, "notification", "Email recipient is unavailable",
+                                {"notification_id": notification.id}, "notification", notification.id)
+                continue
+            message = OutboundEmail(); message["From"] = sender; message["To"] = recipient.email
+            message["Subject"] = notification.title
+            destination = "approvals" if notification.event == "approval.requested" else "tickets"
+            link = f"{settings.public_url.rstrip('/')}/#{destination}" if notification.ticket_id else settings.public_url
+            message.set_content(f"{notification.body}\n\nOpen Northstar Desk: {link}\n")
+            try:
+                client.send_message(message); notification.delivery_status = "sent"; delivered += 1
+                audit(db, "notification.email_sent", "notification", notification.id,
+                      new={"user_id": recipient.id, "event": notification.event})
+            except Exception as exc:
+                notification.delivery_status = "failed"
+                fail_automation(db, "notification", "Email notification failed",
+                                {"notification_id": notification.id, "error": str(exc)[:300]}, "notification", notification.id)
+    return delivered
+
+
 def run_once():
     db=SessionLocal(); organization_id=db.scalar(select(Organization.id).where(Organization.active.is_(True)).order_by(Organization.id).limit(1))
     if organization_id: db.info["organization_id"]=organization_id
     state=db.get(SystemState,"worker") or SystemState(key="worker",value={});db.add(state)
     try:
         sla_job(db)
+        delivered = email_notification_job(db)
         host=os.getenv("ITSM_IMAP_HOST")
         if host:
             port=int(os.getenv("ITSM_IMAP_PORT","993"));username=os.environ["ITSM_IMAP_USERNAME"]
@@ -94,7 +139,7 @@ def run_once():
                 for message_no in ids[0].split():
                     _,data=client.fetch(message_no,"(RFC822)");process_message(db,data[0][1]);client.store(message_no,"+FLAGS","\\Seen");processed+=1
                 mail=db.get(SystemState,"mailbox") or SystemState(key="mailbox",value={});mail.value={"status":"Connected","last_check":now().isoformat(),"messages_processed":processed};db.add(mail)
-        state.value={"status":"Ready","last_heartbeat":now().isoformat(),"scheduled_jobs":"healthy"};db.commit()
+        state.value={"status":"Ready","last_heartbeat":now().isoformat(),"scheduled_jobs":"healthy","emails_delivered":delivered};db.commit()
     except Exception as exc:
         db.rollback();fail_automation(db,"worker","Background worker run failed",{"error":str(exc)[:500]});state=db.get(SystemState,"worker") or SystemState(key="worker",value={});state.value={"status":"Error","last_heartbeat":now().isoformat()};db.add(state);db.commit()
     finally:db.close()

@@ -68,6 +68,7 @@ scripts\restore.ps1 -BackupPath "D:\NorthstarDesk\backups\itsm-TIMESTAMP.dump" -
 - Admin, technician, manager, auditor, and end-user access is acceptance-tested
 - Firewall exposes only HTTPS
 - Mail and RingCentral credentials are stored under the service account
+- SMTP delivery is configured and approval email success/failure is acceptance-tested
 - Logs, health page, and automation failures have an assigned operational owner
 
 Microsoft Entra SSO, RingCentral production credentials/webhooks, and production email still require organization-owned tenant registrations and cannot be completed from source code alone.
