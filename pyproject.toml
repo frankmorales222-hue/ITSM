@@ -1,0 +1,8 @@
+[tool.pytest.ini_options]
+pythonpath = ["backend"]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+
+[tool.coverage.run]
+source = ["backend/itsm"]
+omit = ["backend/itsm/seed.py"]
