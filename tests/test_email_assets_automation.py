@@ -91,7 +91,7 @@ def test_assetpilot_one_click_launcher(admin, monkeypatch):
         asset.source="AssetPilot"; asset.source_id=42; db.commit()
     try:
         opened=admin.post(f"/api/integrations/assetpilot/open/{asset_id}")
-        assert opened.status_code==200 and opened.json()["url"].endswith("/Assets/Details?id=42")
+        assert opened.status_code==200 and opened.json()["url"].endswith("/Assets/Edit?id=42")
         created=admin.post("/api/integrations/assetpilot/create")
         assert created.status_code==200 and created.json()["url"].endswith("/Assets/Create")
     finally:

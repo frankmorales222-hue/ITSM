@@ -59,7 +59,7 @@ def asset_dict(asset: Asset, detail=False):
             "location": asset.location.name if asset.location else None,
             "department": asset.department.name if asset.department else None,
             "source": asset.source, "source_id": asset.source_id, "is_archived": asset.is_archived,
-            "assetpilot_url": f"{settings.assetpilot_url.rstrip('/')}/Assets/Details?id={asset.source_id}" if asset.source == "AssetPilot" and asset.source_id is not None else None}
+            "assetpilot_url": f"{settings.assetpilot_url.rstrip('/')}/Assets/Edit?id={asset.source_id}" if asset.source == "AssetPilot" and asset.source_id is not None else None}
     if detail:
         data.update({"location_id": asset.location_id, "department_id": asset.department_id,
                      "vendor": asset.vendor, "purpose": asset.purpose, "company": asset.company,
@@ -440,7 +440,7 @@ def open_assetpilot_asset(asset_id: int, user: User = Depends(require_roles(*STA
     if asset.source != "AssetPilot" or asset.source_id is None: raise HTTPException(422, "This asset is maintained in ITSM")
     try: ensure_assetpilot_running()
     except (FileNotFoundError, TimeoutError) as exc: raise HTTPException(503, str(exc))
-    return {"url": f"{settings.assetpilot_url.rstrip('/')}/Assets/Details?id={asset.source_id}"}
+    return {"url": f"{settings.assetpilot_url.rstrip('/')}/Assets/Edit?id={asset.source_id}"}
 
 
 @app.get("/api/assets/{asset_id}")
