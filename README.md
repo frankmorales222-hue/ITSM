@@ -4,7 +4,7 @@ Northstar Desk is a locally hosted, browser-based IT service management applicat
 
 ## Quick start on Windows
 
-Prerequisites: Python 3.12+, Node.js 20+, and PowerShell 5.1+.
+Prerequisites: Python 3.12+ and PowerShell 5.1+. Node.js 20+ is needed only to rebuild the React interface; the prepared local workspace includes a production build.
 
 1. Open PowerShell in this folder.
 2. Run `Set-ExecutionPolicy -Scope Process Bypass` if local script execution is restricted.
@@ -38,4 +38,3 @@ These are test-only identities using the reserved `.test` domain. Replace or dis
 - `scripts\start-dev.ps1`: run backend and frontend development servers.
 
 See [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md), [docs/ACCEPTANCE_CHECKLIST.md](docs/ACCEPTANCE_CHECKLIST.md), and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for operating guidance.
-
