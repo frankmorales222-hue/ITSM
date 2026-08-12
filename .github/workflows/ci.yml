@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: dev
+          POSTGRES_DB: itsm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:dev@localhost:5432/itsm
+      SESSION_SECRET: ci-test-session-secret-not-for-real-use
+      EMAIL_WEBHOOK_SECRET: ci-test-webhook-secret-not-for-real-use
+      REDIS_URL: redis://localhost:6379
+      TEST_DATABASE_URL: postgresql://postgres:dev@localhost:5432/itsm_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Create and migrate test database
+        run: |
+          psql "postgresql://postgres:dev@localhost:5432/postgres" -c "CREATE DATABASE itsm_test"
+          npm run migrate:test
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Migrate dev-shaped database and build
+        run: |
+          npm run migrate
+          npm run build

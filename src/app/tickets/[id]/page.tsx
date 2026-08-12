@@ -7,7 +7,12 @@
 import { redirect, notFound } from "next/navigation";
 import { pool } from "@/lib/db";
 import { addReplyAndUpdateStatus, getNotesForTicket, addNote } from "@/lib/tickets";
-import { getAttachmentsForTicket, saveAttachment } from "@/lib/attachments";
+import {
+  getAttachmentsForTicket,
+  saveAttachment,
+  assertValidAttachment,
+  AttachmentValidationError,
+} from "@/lib/attachments";
 import { getSessionUserId, isTechnician } from "@/lib/auth";
 
 const STATUSES = [
@@ -49,10 +54,13 @@ function formatSize(bytes: number): string {
 
 export default async function TicketDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { id } = await params;
+  const { error } = await searchParams;
   const sessionUserId = await getSessionUserId();
   if (!sessionUserId) {
     redirect("/login");
@@ -84,6 +92,18 @@ export default async function TicketDetailPage({
     const body = String(formData.get("body") ?? "").trim();
     const status = String(formData.get("status") ?? "");
     const file = formData.get("attachment") as File | null;
+    const hasFile = file && file.size > 0;
+
+    if (hasFile) {
+      try {
+        assertValidAttachment(file);
+      } catch (err) {
+        if (err instanceof AttachmentValidationError) {
+          redirect(`/tickets/${id}?error=${encodeURIComponent(err.message)}`);
+        }
+        throw err;
+      }
+    }
 
     await addReplyAndUpdateStatus({
       ticketId: id,
@@ -92,7 +112,7 @@ export default async function TicketDetailPage({
       status: status || undefined,
     });
 
-    if (file && file.size > 0) {
+    if (hasFile) {
       await saveAttachment({ ticketId: id, uploadedById: authorId, file });
     }
 
@@ -158,6 +178,7 @@ export default async function TicketDetailPage({
         )}
 
         <h2>Reply</h2>
+        {error && <p className="error">{error}</p>}
         <form action={submitReply} encType="multipart/form-data">
           <div className="field">
             <textarea name="body" rows={4} placeholder="Write a reply..." />

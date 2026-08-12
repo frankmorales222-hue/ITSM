@@ -8,10 +8,34 @@ import {
 } from "@aws-sdk/client-s3";
 import { pool } from "./db";
 
-// S3-compatible storage (MinIO locally — see docker run command in the
-// README). storage_path holds a random object key, never the original
-// filename, so nothing user-controlled ends up in a storage path.
+// S3-compatible storage (MinIO locally — see docker-compose.yml).
+// storage_path holds a random object key, never the original filename, so
+// nothing user-controlled ends up in a storage path.
 const BUCKET = process.env.S3_BUCKET ?? "itsm-attachments";
+
+const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
+
+// Extensions worth blocking outright: things a browser or OS might
+// auto-execute on download/open. Not a malware scanner — just closes off
+// the easiest "click the attachment" vector. Checked case-insensitively.
+const BLOCKED_EXTENSIONS = new Set([
+  "exe", "dll", "msi", "msp", "scr", "com", "bat", "cmd", "ps1", "vbs",
+  "vbe", "js", "jse", "wsf", "wsh", "sh", "app", "jar", "apk", "cpl",
+]);
+
+export class AttachmentValidationError extends Error {}
+
+export function assertValidAttachment(file: File): void {
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    throw new AttachmentValidationError(
+      `File is too large (max ${MAX_FILE_SIZE_BYTES / (1024 * 1024)} MB).`
+    );
+  }
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  if (ext && BLOCKED_EXTENSIONS.has(ext)) {
+    throw new AttachmentValidationError(`.${ext} files aren't allowed.`);
+  }
+}
 
 const s3 = new S3Client({
   endpoint: process.env.S3_ENDPOINT ?? "http://localhost:9000",
@@ -46,6 +70,7 @@ export interface SaveAttachmentInput {
 }
 
 export async function saveAttachment({ ticketId, uploadedById, file, replyId }: SaveAttachmentInput) {
+  assertValidAttachment(file);
   await ensureBucket();
 
   const objectKey = crypto.randomUUID();

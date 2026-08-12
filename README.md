@@ -40,36 +40,27 @@ and attachments. Session auth gates all of it.
 - `src/app/technician/page.tsx` — technician queue, grouped/counted by
   status, with filter + pagination
 - `src/app/globals.css` — the one stylesheet everything uses
+- `docker-compose.yml` — Postgres, Redis, MinIO for local dev
+- `.github/workflows/ci.yml` — type-check, unit tests, integration tests,
+  and a production build on every push/PR
 
 ## What's deliberately NOT here yet
 
 - SSO/real identity provider — see [SSO](#sso) below
 - A caller for the email intake webhook — see [Email intake](#email-intake)
-- Integration/E2E tests — see [Testing](#testing)
+- Route/page-level and E2E tests — see [Testing](#testing)
 
 ## Setup
 
-Needs Postgres, Redis, and MinIO. Locally, that's three Docker containers:
+Needs Postgres, Redis, and MinIO — `docker-compose.yml` covers all three:
 
 ```bash
-docker run -d --name itsm-postgres -p 5432:5432 -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=itsm postgres:16
-docker run -d --name itsm-redis -p 6379:6379 redis:7-alpine
-docker run -d --name itsm-minio -p 9000:9000 -p 9001:9001 \
-  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-  minio/minio server /data --console-address ":9001"
-```
-
-Then:
-
-```bash
+docker compose up -d
 npm install
 cp .env.example .env       # fill in DATABASE_URL, SESSION_SECRET, EMAIL_WEBHOOK_SECRET
 npm run migrate            # runs migrations/001, 002, and 003 in order
 npm run dev
 ```
-
-If the containers already exist from a previous run, `docker start
-itsm-postgres itsm-redis itsm-minio` instead of `docker run` again.
 
 You'll need at least one row in `users` (with a `password_hash` — see
 `src/lib/password.ts`) and `team_members` (linked to the seeded "IT
@@ -142,17 +133,35 @@ OIDC callback handler; nothing downstream changes.
 ## Testing
 
 ```bash
-npm test
+npm test               # unit — pure logic, no infra needed
+npm run test:integration   # integration — needs Postgres + a migrated itsm_test DB
 ```
 
-Vitest, covering the pure/self-contained logic: priority calculation,
-session cookie signing (including tamper and expiry rejection), password
-hashing, and the rate limiter (against a real Redis, not a mock — the
-thing worth checking is the actual INCR+EXPIRE behavior). No coverage yet
-for the DB-touching paths (ticket creation, assignment, routes) — that
-needs a test-database story (isolated schema/transaction rollback per
-test) that doesn't exist yet, and route/page handlers aren't unit-testable
-in isolation the way the lib functions are.
+Unit tests (`vitest.config.ts`) cover the pure/self-contained logic:
+priority calculation, session cookie signing (including tamper and expiry
+rejection), password hashing, attachment validation, and the rate limiter
+(against a real Redis, not a mock — the thing worth checking is the actual
+INCR+EXPIRE behavior).
+
+Integration tests (`vitest.integration.config.ts`, `*.integration.test.ts`)
+cover the DB-touching logic — ticket creation, round-robin assignment,
+reply/status updates, internal notes — against a real, separate database
+so they never touch dev data:
+
+```bash
+createdb itsm_test              # once, if it doesn't exist yet
+TEST_DATABASE_URL=postgresql://postgres:dev@localhost:5432/itsm_test npm run migrate:test
+npm run test:integration
+```
+
+Each test truncates and reseeds the tables it needs
+(`src/lib/test-fixtures.ts`) rather than relying on leftover state, so
+they can run in any order.
+
+Not covered yet: the route handlers and pages themselves (auth
+redirects, access-control checks, form handling) — the integration tests
+exercise the `lib/` functions those routes call, not the HTTP/React layer
+on top.
 
 ## Full reference
 

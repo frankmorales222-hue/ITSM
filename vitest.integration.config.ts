@@ -4,8 +4,10 @@ import path from "path";
 export default defineConfig({
   test: {
     environment: "node",
-    setupFiles: ["./vitest.setup.ts"],
-    exclude: ["**/node_modules/**", "**/*.integration.test.ts"],
+    setupFiles: ["./vitest.integration.setup.ts"],
+    include: ["**/*.integration.test.ts"],
+    // DB-touching tests share connections/rows; run them one at a time.
+    fileParallelism: false,
   },
   resolve: {
     alias: {
