@@ -30,4 +30,12 @@ describe("isRateLimited", () => {
     expect(await isRateLimited(keyA)).toBe(true);
     expect(await isRateLimited(keyB)).toBe(false);
   });
+
+  it("honors a custom maxAttempts", async () => {
+    const key = `test:${crypto.randomUUID()}`;
+    const opts = { maxAttempts: 2 };
+    expect(await isRateLimited(key, opts)).toBe(false);
+    expect(await isRateLimited(key, opts)).toBe(false);
+    expect(await isRateLimited(key, opts)).toBe(true);
+  });
 });

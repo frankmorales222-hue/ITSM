@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { pool } from "@/lib/db";
 import { createTicket as createTicketRecord, getDefaultTeamId } from "@/lib/tickets";
 import { getSessionUserId } from "@/lib/auth";
+import { isTicketCreationRateLimited } from "@/lib/rate-limit";
 
 async function getCategories() {
   const result = await pool.query(
@@ -19,6 +20,10 @@ async function createTicket(formData: FormData) {
   const userId = await getSessionUserId();
   if (!userId) {
     redirect("/login");
+  }
+
+  if (await isTicketCreationRateLimited(userId)) {
+    redirect("/tickets/new?error=rate_limited");
   }
 
   const teamId = await getDefaultTeamId();
@@ -41,11 +46,16 @@ async function createTicket(formData: FormData) {
   redirect("/tickets");
 }
 
-export default async function NewTicketPage() {
+export default async function NewTicketPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   const userId = await getSessionUserId();
   if (!userId) {
     redirect("/login");
   }
+  const { error } = await searchParams;
   const categories = await getCategories();
 
   return (
@@ -55,6 +65,9 @@ export default async function NewTicketPage() {
       </nav>
       <div className="card" style={{ maxWidth: 480 }}>
         <h1>Report a problem</h1>
+        {error === "rate_limited" && (
+          <p className="error">Too many tickets created recently. Try again in a few minutes.</p>
+        )}
         <form action={createTicket}>
           <div className="field">
             <label htmlFor="subject">Subject</label>

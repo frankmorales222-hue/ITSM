@@ -23,6 +23,9 @@ const BLOCKED_EXTENSIONS = new Set([
   "vbe", "js", "jse", "wsf", "wsh", "sh", "app", "jar", "apk", "cpl",
 ]);
 
+const MAX_ATTACHMENTS_PER_TICKET = 20;
+const MAX_TOTAL_BYTES_PER_TICKET = 200 * 1024 * 1024; // 200 MB
+
 export class AttachmentValidationError extends Error {}
 
 export function assertValidAttachment(file: File): void {
@@ -34,6 +37,30 @@ export function assertValidAttachment(file: File): void {
   const ext = file.name.split(".").pop()?.toLowerCase();
   if (ext && BLOCKED_EXTENSIONS.has(ext)) {
     throw new AttachmentValidationError(`.${ext} files aren't allowed.`);
+  }
+}
+
+// Separate from assertValidAttachment because this one needs a DB round
+// trip (existing usage for the ticket) — callers that only care about the
+// file itself (e.g. showing an error before touching the DB at all) can
+// use assertValidAttachment alone first.
+export async function assertWithinTicketQuota(ticketId: string, file: File): Promise<void> {
+  const result = await pool.query(
+    `SELECT count(*)::int AS count, coalesce(sum(size_bytes), 0)::bigint AS total_bytes
+     FROM ticket_attachments WHERE ticket_id = $1`,
+    [ticketId]
+  );
+  const { count, total_bytes } = result.rows[0];
+
+  if (count >= MAX_ATTACHMENTS_PER_TICKET) {
+    throw new AttachmentValidationError(
+      `This ticket already has the maximum of ${MAX_ATTACHMENTS_PER_TICKET} attachments.`
+    );
+  }
+  if (Number(total_bytes) + file.size > MAX_TOTAL_BYTES_PER_TICKET) {
+    throw new AttachmentValidationError(
+      `This would exceed the ${MAX_TOTAL_BYTES_PER_TICKET / (1024 * 1024)} MB total attachment limit for this ticket.`
+    );
   }
 }
 
@@ -71,6 +98,7 @@ export interface SaveAttachmentInput {
 
 export async function saveAttachment({ ticketId, uploadedById, file, replyId }: SaveAttachmentInput) {
   assertValidAttachment(file);
+  await assertWithinTicketQuota(ticketId, file);
   await ensureBucket();
 
   const objectKey = crypto.randomUUID();

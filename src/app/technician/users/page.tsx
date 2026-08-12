@@ -31,7 +31,13 @@ async function generateLink(formData: FormData) {
   redirect("/technician/users");
 }
 
-export default async function TechnicianUsersPage() {
+const PAGE_SIZE = 20;
+
+export default async function TechnicianUsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const sessionUserId = await getSessionUserId();
   if (!sessionUserId) {
     redirect("/login");
@@ -40,10 +46,14 @@ export default async function TechnicianUsersPage() {
     notFound();
   }
 
-  const [users, reveal] = await Promise.all([
-    usersWithoutPassword(),
+  const { page: pageParam } = await searchParams;
+  const page = Math.max(1, Number(pageParam) || 1);
+
+  const [{ users, total }, reveal] = await Promise.all([
+    usersWithoutPassword(page, PAGE_SIZE),
     takeRevealToken(sessionUserId),
   ]);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const revealedUser = reveal ? users.find((u) => u.id === reveal.targetUserId) : null;
   const setupUrl = reveal
     ? `${process.env.NEXT_PUBLIC_APP_URL}/set-password?token=${reveal.token}`
@@ -100,6 +110,16 @@ export default async function TechnicianUsersPage() {
           </table>
         )}
       </div>
+
+      {totalPages > 1 && (
+        <div className="pagination">
+          {page > 1 && <a href={`/technician/users?page=${page - 1}`}>&larr; Prev</a>}
+          <span className="muted">
+            Page {page} of {totalPages}
+          </span>
+          {page < totalPages && <a href={`/technician/users?page=${page + 1}`}>Next &rarr;</a>}
+        </div>
+      )}
     </main>
   );
 }

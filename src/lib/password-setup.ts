@@ -69,13 +69,22 @@ export async function takeRevealToken(
   return JSON.parse(raw);
 }
 
-export async function usersWithoutPassword() {
+export async function usersWithoutPassword(page = 1, pageSize = 20) {
+  const offset = (page - 1) * pageSize;
+
+  const countResult = await pool.query(
+    `SELECT count(*)::int AS total FROM users WHERE password_hash IS NULL AND is_active = true`
+  );
+  const total = countResult.rows[0].total;
+
   const result = await pool.query(
     `SELECT id, display_name, email,
             password_setup_token_hash IS NOT NULL AND password_setup_expires_at > now() AS has_pending_link
      FROM users
      WHERE password_hash IS NULL AND is_active = true
-     ORDER BY display_name`
+     ORDER BY display_name
+     LIMIT $1 OFFSET $2`,
+    [pageSize, offset]
   );
-  return result.rows;
+  return { users: result.rows, total };
 }

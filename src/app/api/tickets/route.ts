@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { createTicket } from "@/lib/tickets";
 import { getSessionUserIdFromRequest } from "@/lib/auth";
+import { isTicketCreationRateLimited } from "@/lib/rate-limit";
 
 // GET /api/tickets?role=employee|technician
 // Employees see only their own tickets; technicians see their team's queue.
@@ -33,6 +34,10 @@ export async function POST(req: NextRequest) {
   const userId = getSessionUserIdFromRequest(req);
   if (!userId) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  if (await isTicketCreationRateLimited(userId)) {
+    return NextResponse.json({ error: "Too many tickets created recently" }, { status: 429 });
   }
 
   const body = await req.json();

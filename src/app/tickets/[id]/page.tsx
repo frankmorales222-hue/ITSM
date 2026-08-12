@@ -11,6 +11,7 @@ import {
   getAttachmentsForTicket,
   saveAttachment,
   assertValidAttachment,
+  assertWithinTicketQuota,
   AttachmentValidationError,
 } from "@/lib/attachments";
 import { getSessionUserId, isTechnician } from "@/lib/auth";
@@ -97,6 +98,7 @@ export default async function TicketDetailPage({
     if (hasFile) {
       try {
         assertValidAttachment(file);
+        await assertWithinTicketQuota(id, file);
       } catch (err) {
         if (err instanceof AttachmentValidationError) {
           redirect(`/tickets/${id}?error=${encodeURIComponent(err.message)}`);

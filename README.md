@@ -41,14 +41,23 @@ and attachments. Session auth gates all of it.
   status, with filter + pagination
 - `src/app/globals.css` — the one stylesheet everything uses
 - `docker-compose.yml` — Postgres, Redis, MinIO for local dev
+- `scripts/seed-technician.ts` — bootstraps the first technician (`npm run
+  seed:technician`), see [Setup](#setup)
+- `Dockerfile` — multi-stage build for the app itself (Next.js standalone
+  output). Built and run locally against the compose infra to confirm it
+  works; nowhere to deploy it yet — see [Deployment](#deployment)
 - `.github/workflows/ci.yml` — type-check, unit tests, integration tests,
-  and a production build on every push/PR
+  and a production build on every push/PR. Verified locally end-to-end
+  with [`act`](https://github.com/nektos/act) (no GitHub remote is
+  configured on this repo, so it's never run on GitHub itself) — that run
+  is what caught `psql` not being on the runner image, hence the explicit
+  `apt-get install postgresql-client` step
 
 ## What's deliberately NOT here yet
 
 - SSO/real identity provider — see [SSO](#sso) below
 - A caller for the email intake webhook — see [Email intake](#email-intake)
-- Route/page-level and E2E tests — see [Testing](#testing)
+- Page-level and browser E2E tests — see [Testing](#testing)
 
 ## Setup
 
@@ -63,10 +72,21 @@ npm run dev
 ```
 
 You'll need at least one row in `users` (with a `password_hash` — see
-`src/lib/password.ts`) and `team_members` (linked to the seeded "IT
-Support" team) before login and ticket assignment do anything meaningful.
-There's no seed data for people, intentionally, since that should come
-from your actual directory later.
+`src/lib/password.ts`) and `team_members` before login and ticket
+assignment do anything meaningful. There's no seed data for people,
+intentionally, since that should come from your actual directory later —
+except the very first technician, who has to come from somewhere:
+
+```bash
+npm run seed:technician -- --email=you@example.com --name="Your Name"
+```
+
+Creates (or updates) an active technician on the "IT Support" team,
+printing a generated password if you don't pass `--password`. Every
+technician after this one gets onboarded through `/technician/users`
+instead (see [Password setup](#password-setup)) — this script exists
+because that page is technician-only, so the first one can't come from
+there.
 
 ## Email intake
 
@@ -145,8 +165,13 @@ INCR+EXPIRE behavior).
 
 Integration tests (`vitest.integration.config.ts`, `*.integration.test.ts`)
 cover the DB-touching logic — ticket creation, round-robin assignment,
-reply/status updates, internal notes — against a real, separate database
-so they never touch dev data:
+reply/status updates, internal notes — and the API route handlers
+themselves (`src/app/api/tickets/**/*.integration.test.ts`), calling the
+actual `GET`/`POST`/`PATCH` exports with real signed session cookies to
+check auth-required, cross-user access denied, and client-supplied
+identity fields (`requesterId`, `authorId`) being ignored in favor of the
+session. All against a real, separate database so it never touches dev
+data:
 
 ```bash
 createdb itsm_test              # once, if it doesn't exist yet
@@ -158,10 +183,39 @@ Each test truncates and reseeds the tables it needs
 (`src/lib/test-fixtures.ts`) rather than relying on leftover state, so
 they can run in any order.
 
-Not covered yet: the route handlers and pages themselves (auth
-redirects, access-control checks, form handling) — the integration tests
-exercise the `lib/` functions those routes call, not the HTTP/React layer
-on top.
+Not covered yet: the pages themselves (Server Component rendering, the
+`redirect()`-to-`/login` behavior, form submission through actual HTML) —
+that needs a browser driving the real app (e.g. Playwright), which isn't
+set up. The route handlers you'd hit *through* those pages are covered;
+the React layer rendering the forms that call them isn't.
+
+## Deployment
+
+`Dockerfile` builds the app (Next.js `output: "standalone"`, see
+`next.config.mjs`) into a small runtime image. Verified locally:
+
+```bash
+docker build -t itsm-app .
+docker run -p 3001:3000 \
+  -e DATABASE_URL=postgresql://postgres:dev@host.docker.internal:5432/itsm \
+  -e REDIS_URL=redis://host.docker.internal:6379 \
+  -e S3_ENDPOINT=http://host.docker.internal:9000 \
+  -e S3_BUCKET=itsm-attachments -e S3_ACCESS_KEY=minioadmin -e S3_SECRET_KEY=minioadmin \
+  -e SESSION_SECRET=... -e EMAIL_WEBHOOK_SECRET=... \
+  itsm-app
+```
+
+(`host.docker.internal` because the compose services publish to the host,
+not a shared Docker network with the app container — `docker-compose.yml`
+intentionally only runs the infra, not the app itself, since the app is
+what you're actively developing and hot-reload via `npm run dev` on the
+host is what this project actually uses day to day.)
+
+That's as far as this goes. There's no hosting target — no Vercel
+project, no cloud account, no CI deploy step — because none is
+configured in this environment, and standing one up means a real
+decision (which provider, which region, how secrets get there) that
+isn't mine to make.
 
 ## Full reference
 
