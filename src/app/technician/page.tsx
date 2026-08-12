@@ -63,6 +63,7 @@ export default async function TechnicianPage({
       <nav className="nav">
         <a href="/tickets">&larr; My Requests</a>
         <a href="/technician/users">Users without a password</a>
+        <a href="/admin">Admin</a>
       </nav>
 
       <h1>Technician Queue</h1>

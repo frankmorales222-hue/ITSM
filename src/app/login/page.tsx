@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import { pool } from "@/lib/db";
 import { verifyPassword } from "@/lib/password";
 import { isRateLimited } from "@/lib/rate-limit";
+import { getAzureAdConfig } from "@/lib/admin-settings";
 import {
   createSessionCookieValue,
   SESSION_COOKIE_NAME,
@@ -16,6 +17,7 @@ import {
 const ERROR_MESSAGES: Record<string, string> = {
   invalid: "Invalid email or password.",
   rate_limited: "Too many attempts. Try again in a minute.",
+  sso_failed: "Microsoft sign-in didn't complete. Try again.",
 };
 
 async function login(formData: FormData) {
@@ -67,6 +69,7 @@ export default async function LoginPage({
 }) {
   const { error, setup } = await searchParams;
   const errorMessage = error ? ERROR_MESSAGES[error] ?? ERROR_MESSAGES.invalid : null;
+  const azureAdConfigured = (await getAzureAdConfig()) !== null;
 
   return (
     <main>
@@ -85,6 +88,18 @@ export default async function LoginPage({
           </div>
           <button type="submit">Log in</button>
         </form>
+        {azureAdConfigured && (
+          <>
+            <p className="muted" style={{ margin: "16px 0 8px", textAlign: "center" }}>
+              or
+            </p>
+            <a href="/api/auth/azure-ad/start">
+              <button type="button" className="secondary" style={{ width: "100%" }}>
+                Sign in with Microsoft
+              </button>
+            </a>
+          </>
+        )}
       </div>
     </main>
   );

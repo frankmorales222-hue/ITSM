@@ -9,3 +9,5 @@ process.env.S3_ENDPOINT ??= "http://localhost:9000";
 process.env.S3_BUCKET ??= "itsm-attachments-test";
 process.env.S3_ACCESS_KEY ??= "minioadmin";
 process.env.S3_SECRET_KEY ??= "minioadmin";
+process.env.ADMIN_SETTINGS_ENCRYPTION_KEY ??=
+  "a01270e325f288629bccc7cf4cdc24f36658271e1b1eacd10af12724a14fd510";

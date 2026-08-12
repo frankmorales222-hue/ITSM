@@ -8,21 +8,26 @@
     "start": "next start",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "migrate:test": "psql \"$TEST_DATABASE_URL\" -f migrations/001_init.sql && psql \"$TEST_DATABASE_URL\" -f migrations/002_add_password.sql && psql \"$TEST_DATABASE_URL\" -f migrations/003_add_password_setup_token.sql",
-    "migrate": "psql \"$DATABASE_URL\" -f migrations/001_init.sql && psql \"$DATABASE_URL\" -f migrations/002_add_password.sql && psql \"$DATABASE_URL\" -f migrations/003_add_password_setup_token.sql",
+    "migrate:test": "psql \"$TEST_DATABASE_URL\" -f migrations/001_init.sql && psql \"$TEST_DATABASE_URL\" -f migrations/002_add_password.sql && psql \"$TEST_DATABASE_URL\" -f migrations/003_add_password_setup_token.sql && psql \"$TEST_DATABASE_URL\" -f migrations/004_add_admin_settings.sql",
+    "migrate": "psql \"$DATABASE_URL\" -f migrations/001_init.sql && psql \"$DATABASE_URL\" -f migrations/002_add_password.sql && psql \"$DATABASE_URL\" -f migrations/003_add_password_setup_token.sql && psql \"$DATABASE_URL\" -f migrations/004_add_admin_settings.sql",
     "seed:technician": "tsx scripts/seed-technician.ts",
+    "poll:email": "tsx scripts/poll-inbox.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1108.0",
+    "imapflow": "^1.7.0",
     "ioredis": "^6.0.0",
+    "mailparser": "^3.9.15",
     "next": "^15.0.0",
+    "openid-client": "^6.8.5",
     "pg": "^8.12.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^20.14.0",
     "@types/pg": "^8.11.0",
     "@types/react": "^18.3.0",

@@ -38,6 +38,8 @@ export default defineConfig({
       S3_BUCKET: "itsm-attachments-e2e",
       S3_ACCESS_KEY: "minioadmin",
       S3_SECRET_KEY: "minioadmin",
+      ADMIN_SETTINGS_ENCRYPTION_KEY:
+        "a01270e325f288629bccc7cf4cdc24f36658271e1b1eacd10af12724a14fd510",
       NEXT_PUBLIC_APP_URL: BASE_URL,
     },
   },

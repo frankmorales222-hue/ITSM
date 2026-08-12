@@ -22,16 +22,23 @@ and attachments. Session auth gates all of it.
 - `src/lib/rate-limit.ts` — Redis-backed rate limiter for `/login`
 - `src/lib/password-setup.ts` — one-time technician-issued password setup
   tokens (see [Password setup](#password-setup))
+- `src/lib/admin-settings.ts` — encrypted integration config storage (see
+  [Admin settings](#admin-settings))
+- `src/lib/oidc.ts`, `src/app/api/auth/azure-ad/` — Azure AD OIDC login
+  (see [SSO](#sso))
 - `src/app/login/page.tsx`, `src/app/api/auth/logout/route.ts` — auth
 - `src/app/set-password/page.tsx` — where a setup link lands
 - `src/app/technician/users/page.tsx` — technician view for generating
   setup links
+- `src/app/admin/page.tsx` — technician view for Azure AD/IMAP config
 - `src/app/api/tickets/route.ts` — create ticket (assigns automatically) +
   list tickets, scoped to the session user
 - `src/app/api/tickets/[id]/route.ts` — get ticket + conversation, post a
   reply, change status; restricted to the ticket's requester/assigned tech
 - `src/app/api/attachments/[id]/route.ts` — download an attachment
-- `src/app/api/email/inbound/route.ts` — email intake webhook (see below)
+- `src/app/api/email/inbound/route.ts` — email intake webhook,
+  `scripts/poll-inbox.ts` — its IMAP caller (see
+  [Email intake](#email-intake))
 - `src/app/tickets/page.tsx` — "My Requests" list, with status filter +
   pagination
 - `src/app/tickets/new/page.tsx` — "Report a problem" form
@@ -56,8 +63,10 @@ and attachments. Session auth gates all of it.
 
 ## What's deliberately NOT here yet
 
-- SSO/real identity provider — see [SSO](#sso) below
-- A caller for the email intake webhook — see [Email intake](#email-intake)
+- Email intake tested against a real inbox, and SSO tested against a real
+  Azure AD tenant — both were built and verified against real (local,
+  temporary) stand-ins instead; see [Email intake](#email-intake) and
+  [SSO](#sso) for exactly what that did and didn't prove
 
 ## Setup
 
@@ -96,18 +105,27 @@ via `In-Reply-To`, dedup via `inbound_email_log.message_id`, no ticket
 created for a sender that doesn't match an existing user). It requires an
 `x-webhook-secret` header matching `EMAIL_WEBHOOK_SECRET`.
 
-Nothing calls it yet. There's no mailbox, IMAP/SMTP credentials, or mail
-provider configured in this environment, so there's nothing to poll or
-subscribe to — building a poller against credentials that don't exist
-would be code nobody could verify actually works. Two ways to wire it up
-once there's a real mailbox:
+`scripts/poll-inbox.ts` (`npm run poll:email`) is the caller: connects via
+IMAP (`imapflow`) using the mailbox configured through
+[`/admin`](#admin-settings), parses unseen messages (`mailparser`), POSTs
+each to the webhook above, and flags them `\Seen` regardless of outcome —
+a message the webhook rejects (unknown sender, duplicate) won't succeed on
+a later poll either, so leaving it unread would just retry it forever.
+Meant to run on a schedule (cron, Task Scheduler); it's a script rather
+than a background process because Next.js doesn't have a
+long-running-worker story and a poller doesn't need one.
 
-1. **Provider webhook** — if the inbox is behind something like Mailgun,
-   Postmark, or SendGrid's inbound parse, point its webhook at this route
-   directly (mapping their payload shape to `{ messageId, inReplyTo, from,
-   subject, body }`).
-2. **Scheduled poller** — a small job (e.g. IMAP via `imapflow`) that runs
-   on a schedule, reads new messages, and POSTs each one here.
+There's no real inbox in this environment, so this was verified against a
+real (local, temporary) IMAP/SMTP server (`greenmail/standalone`, not part
+of the checked-in setup): sent an email, ran the poller, confirmed a
+ticket was created with the right subject/body; sent a reply with a
+matching `In-Reply-To`, ran the poller again, confirmed it threaded onto
+the same ticket instead of creating a second one; confirmed a second poll
+with nothing new does nothing (the first message's `\Seen` flag holds).
+
+If a real inbox is instead behind a provider with inbound-parse support
+(Mailgun, Postmark, SendGrid), point its webhook at `/api/email/inbound`
+directly instead of running the poller — same endpoint, no poller needed.
 
 ## Password setup
 
@@ -132,23 +150,50 @@ that creates it to the page that displays it goes through a 60-second,
 single-read Redis slot — never a URL — so it can't end up sitting in
 browser history or a server access log.
 
+## Admin settings
+
+`/admin` (technician-only) holds integration config that used to require
+editing `.env` and restarting: Azure AD and IMAP credentials, entered
+through a form and encrypted at rest (AES-256-GCM,
+`src/lib/admin-settings.ts`, key in `ADMIN_SETTINGS_ENCRYPTION_KEY`).
+Secrets are write-only in the UI — once saved, the form shows only
+"configured", never the value back. A "Clear" action removes a section's
+settings entirely.
+
 ## SSO
 
-Not implemented, and not scaffolded either — here's why. Real SSO (SAML or
-OIDC) needs a real identity provider tenant (Okta, Azure AD, Google
-Workspace) with a registered client ID/secret and redirect URI, none of
-which exist in this dev environment. A library like Auth.js could be
-wired up against a generic OIDC config read from env vars, but until
-there's a real IdP to redirect to and back from, that integration can't
-actually be exercised — it would be code nobody could verify works, same
-problem as the email poller below.
+Real Azure AD (Entra ID) sign-in via standard OIDC authorization code +
+PKCE (`openid-client`), config entered through [`/admin`](#admin-settings)
+instead of `.env` so it can be set after deploy. `/login` only shows
+"Sign in with Microsoft" once it's configured.
 
-The current design keeps this a contained swap when a real IdP shows up:
-credential verification is centralized in `login()` inside
-`src/app/login/page.tsx`, and session issuance/verification
-(`src/lib/session.ts`, `src/lib/auth.ts`) doesn't care how identity was
-established. Replacing SSO means replacing that one function with an
-OIDC callback handler; nothing downstream changes.
+- `src/lib/oidc.ts` — discovery + the PKCE/state/nonce handoff. Verifier
+  and nonce are stashed in Redis keyed by `state` (the one value
+  guaranteed to survive the round trip to Microsoft and back), single-use,
+  10-minute TTL
+- `src/app/api/auth/azure-ad/start/route.ts` — builds the authorization
+  URL and redirects
+- `src/app/api/auth/azure-ad/callback/route.ts` — exchanges the code,
+  reads the `email`/`name` ID token claims, and either logs in an
+  existing user or auto-provisions one. Auto-provisioning is deliberate:
+  Azure AD *is* the "actual directory" earlier parts of this app deferred
+  to for who exists — there's no reason to also require someone be seeded
+  here first once SSO is live
+
+There's no real Azure AD tenant in this environment, so the actual login
+screen was never exercised against Microsoft. What *was* verified,
+end-to-end, against a real (local, mock) spec-compliant OIDC provider
+(`oidc-provider`, run temporarily, not part of the checked-in suite):
+discovery, PKCE, state, nonce, the authorization code exchange, ID token
+claim extraction, first-login auto-provisioning, and second-login
+matching the existing user instead of duplicating it. That's every moving
+part except the one thing that requires an actual Microsoft tenant —
+whether Azure's real endpoints behave the way its documentation says.
+
+`AZURE_AD_AUTHORITY_HOST` (default `https://login.microsoftonline.com`)
+is overridable — needed for Azure's sovereign-cloud variants (US Gov,
+China) in real deployments, and what pointed the verification above at
+the local mock provider in development.
 
 ## Testing
 
