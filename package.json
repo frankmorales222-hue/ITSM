@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "migrate": "psql \"$DATABASE_URL\" -f migrations/001_init.sql"
+    "migrate": "psql \"$DATABASE_URL\" -f migrations/001_init.sql && psql \"$DATABASE_URL\" -f migrations/002_add_password.sql"
   },
   "dependencies": {
     "next": "^15.0.0",
@@ -19,5 +19,8 @@
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.0",
     "@types/pg": "^8.11.0"
+  },
+  "allowScripts": {
+    "sharp@0.34.5": true
   }
 }
