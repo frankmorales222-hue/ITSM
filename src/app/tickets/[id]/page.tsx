@@ -1,10 +1,14 @@
-// Ticket detail page — conversation (public replies only) + a reply box
-// and status control. The acting user is the session user.
+// Ticket detail page — conversation (public replies only) + a reply box,
+// status control, and attachments, visible to the ticket's requester or
+// assigned technician. Internal notes are technician-only, gated
+// server-side (not just hidden in the UI) since ticket_notes must never
+// reach the requester.
 
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { pool } from "@/lib/db";
-import { addReplyAndUpdateStatus } from "@/lib/tickets";
-import { getSessionUserId } from "@/lib/auth";
+import { addReplyAndUpdateStatus, getNotesForTicket, addNote } from "@/lib/tickets";
+import { getAttachmentsForTicket, saveAttachment } from "@/lib/attachments";
+import { getSessionUserId, isTechnician } from "@/lib/auth";
 
 const STATUSES = [
   "open",
@@ -37,6 +41,12 @@ async function getTicket(id: string) {
   return { ticket: ticketResult.rows[0], replies: repliesResult.rows };
 }
 
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default async function TicketDetailPage({
   params,
 }: {
@@ -47,15 +57,23 @@ export default async function TicketDetailPage({
   if (!sessionUserId) {
     redirect("/login");
   }
+
   const data = await getTicket(id);
   if (!data) {
-    return (
-      <main style={{ padding: 24, fontFamily: "sans-serif" }}>
-        <p>Ticket not found.</p>
-      </main>
-    );
+    notFound();
   }
   const { ticket, replies } = data;
+
+  const canView = ticket.requester_id === sessionUserId || ticket.assigned_tech_id === sessionUserId;
+  if (!canView) {
+    notFound();
+  }
+
+  const isTech = await isTechnician(sessionUserId);
+  const [attachments, notes] = await Promise.all([
+    getAttachmentsForTicket(id),
+    isTech ? getNotesForTicket(id) : Promise.resolve([]),
+  ]);
 
   async function submitReply(formData: FormData) {
     "use server";
@@ -65,6 +83,7 @@ export default async function TicketDetailPage({
     }
     const body = String(formData.get("body") ?? "").trim();
     const status = String(formData.get("status") ?? "");
+    const file = formData.get("attachment") as File | null;
 
     await addReplyAndUpdateStatus({
       ticketId: id,
@@ -73,59 +92,119 @@ export default async function TicketDetailPage({
       status: status || undefined,
     });
 
+    if (file && file.size > 0) {
+      await saveAttachment({ ticketId: id, uploadedById: authorId, file });
+    }
+
+    redirect(`/tickets/${id}`);
+  }
+
+  async function submitNote(formData: FormData) {
+    "use server";
+    const authorId = await getSessionUserId();
+    if (!authorId || !(await isTechnician(authorId))) {
+      redirect("/login");
+    }
+    const body = String(formData.get("note") ?? "").trim();
+    if (body) {
+      await addNote({ ticketId: id, authorId, body });
+    }
     redirect(`/tickets/${id}`);
   }
 
   return (
-    <main style={{ padding: 24, fontFamily: "sans-serif", maxWidth: 640 }}>
-      <p>
+    <main>
+      <nav className="nav">
         <a href="/tickets">&larr; My Requests</a>
-      </p>
-      <h1>
-        {ticket.ticket_number}: {ticket.subject}
-      </h1>
-      <p>
-        Status: <strong>{ticket.status}</strong> &nbsp;|&nbsp; Priority:{" "}
-        <strong>{ticket.priority}</strong>
-      </p>
-      <p style={{ whiteSpace: "pre-wrap" }}>{ticket.description}</p>
+      </nav>
 
-      <h2>Conversation</h2>
-      {replies.length === 0 && <p>No replies yet.</p>}
-      <ul style={{ listStyle: "none", padding: 0 }}>
+      <div className="card">
+        <h1>
+          {ticket.ticket_number}: {ticket.subject}
+        </h1>
+        <p>
+          <span className="badge">{ticket.status}</span>{" "}
+          <span className="badge">{ticket.priority}</span>
+        </p>
+        <p style={{ whiteSpace: "pre-wrap" }}>{ticket.description}</p>
+      </div>
+
+      <div className="card">
+        <h2>Conversation</h2>
+        {replies.length === 0 && <p className="muted">No replies yet.</p>}
         {replies.map((r: any) => (
-          <li
-            key={r.id}
-            style={{ borderBottom: "1px solid #eee", padding: "8px 0" }}
-          >
-            <strong>{r.author_name}</strong>{" "}
-            <span style={{ color: "#888" }}>
+          <div key={r.id} className="reply">
+            <div className="reply-meta">
+              <strong>{r.author_name}</strong> &middot;{" "}
               {new Date(r.created_at).toLocaleString()}
-            </span>
-            <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{r.body}</p>
-          </li>
+            </div>
+            <p className="reply-body">{r.body}</p>
+          </div>
         ))}
-      </ul>
 
-      <h2>Reply</h2>
-      <form action={submitReply}>
-        <textarea name="body" rows={4} style={{ width: "100%" }} />
-        <div style={{ marginTop: 8 }}>
-          <label htmlFor="status">Change status</label>
-          <br />
-          <select id="status" name="status" defaultValue={ticket.status}>
-            <option value="">(no change)</option>
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
+        <h2>Attachments</h2>
+        {attachments.length === 0 && <p className="muted">No attachments.</p>}
+        {attachments.length > 0 && (
+          <ul style={{ paddingLeft: 20 }}>
+            {attachments.map((a: any) => (
+              <li key={a.id}>
+                <a href={`/api/attachments/${a.id}`}>{a.file_name}</a>{" "}
+                <span className="muted">
+                  ({formatSize(a.size_bytes)}, {a.uploaded_by_name})
+                </span>
+              </li>
             ))}
-          </select>
+          </ul>
+        )}
+
+        <h2>Reply</h2>
+        <form action={submitReply} encType="multipart/form-data">
+          <div className="field">
+            <textarea name="body" rows={4} placeholder="Write a reply..." />
+          </div>
+          <div className="field">
+            <label htmlFor="attachment">Attach a file (optional)</label>
+            <input id="attachment" name="attachment" type="file" />
+          </div>
+          <div className="field" style={{ maxWidth: 220 }}>
+            <label htmlFor="status">Change status</label>
+            <select id="status" name="status" defaultValue="">
+              <option value="">(no change)</option>
+              {STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button type="submit">Submit</button>
+        </form>
+      </div>
+
+      {isTech && (
+        <div className="card">
+          <h2>Internal Notes</h2>
+          <p className="muted">Visible to technicians only — never shown to the requester.</p>
+          {notes.length === 0 && <p className="muted">No notes yet.</p>}
+          {notes.map((n: any) => (
+            <div key={n.id} className="note">
+              <div className="reply-meta">
+                <strong>{n.author_name}</strong> &middot;{" "}
+                {new Date(n.created_at).toLocaleString()}
+              </div>
+              <p className="reply-body">{n.body}</p>
+            </div>
+          ))}
+          <form action={submitNote} style={{ marginTop: 12 }}>
+            <div className="field">
+              <textarea name="note" rows={3} placeholder="Add an internal note..." />
+            </div>
+            <button type="submit" className="secondary">
+              Add note
+            </button>
+          </form>
         </div>
-        <button type="submit" style={{ marginTop: 8 }}>
-          Submit
-        </button>
-      </form>
+      )}
     </main>
   );
 }

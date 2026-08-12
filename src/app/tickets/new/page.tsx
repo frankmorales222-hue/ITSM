@@ -49,61 +49,55 @@ export default async function NewTicketPage() {
   const categories = await getCategories();
 
   return (
-    <main style={{ padding: 24, fontFamily: "sans-serif", maxWidth: 480 }}>
-      <h1>Report a problem</h1>
-      <form action={createTicket}>
-        <div style={{ marginBottom: 12 }}>
-          <label htmlFor="subject">Subject</label>
-          <br />
-          <input id="subject" name="subject" required style={{ width: "100%" }} />
-        </div>
+    <main>
+      <nav className="nav">
+        <a href="/tickets">&larr; My Requests</a>
+      </nav>
+      <div className="card" style={{ maxWidth: 480 }}>
+        <h1>Report a problem</h1>
+        <form action={createTicket}>
+          <div className="field">
+            <label htmlFor="subject">Subject</label>
+            <input id="subject" name="subject" required />
+          </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label htmlFor="description">Description</label>
-          <br />
-          <textarea
-            id="description"
-            name="description"
-            required
-            rows={5}
-            style={{ width: "100%" }}
-          />
-        </div>
+          <div className="field">
+            <label htmlFor="description">Description</label>
+            <textarea id="description" name="description" required rows={5} />
+          </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label htmlFor="categoryId">Category</label>
-          <br />
-          <select id="categoryId" name="categoryId">
-            {categories.map((c: any) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="field">
+            <label htmlFor="categoryId">Category</label>
+            <select id="categoryId" name="categoryId">
+              {categories.map((c: any) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label htmlFor="impact">Impact</label>
-          <br />
-          <select id="impact" name="impact">
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </div>
+          <div className="field">
+            <label htmlFor="impact">Impact</label>
+            <select id="impact" name="impact">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
 
-        <div style={{ marginBottom: 12 }}>
-          <label htmlFor="urgency">Urgency</label>
-          <br />
-          <select id="urgency" name="urgency">
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </div>
+          <div className="field">
+            <label htmlFor="urgency">Urgency</label>
+            <select id="urgency" name="urgency">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
 
-        <button type="submit">Submit</button>
-      </form>
+          <button type="submit">Submit</button>
+        </form>
+      </div>
     </main>
   );
 }

@@ -6,11 +6,19 @@ import { getSessionUserIdFromRequest } from "@/lib/auth";
 // GET /api/tickets/:id
 // Returns the ticket plus its public conversation (replies only —
 // ticket_notes is deliberately never joined here so internal notes can
-// never leak into an employee-facing response).
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+// never leak into an employee-facing response). Restricted to the
+// ticket's requester or assigned technician — a valid session alone
+// isn't enough to read someone else's ticket.
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const userId = getSessionUserIdFromRequest(req);
+  if (!userId) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
   const { id } = await params;
   const ticketResult = await pool.query(`SELECT * FROM tickets WHERE id = $1`, [id]);
-  if (ticketResult.rows.length === 0) {
+  const ticket = ticketResult.rows[0];
+  if (!ticket || (ticket.requester_id !== userId && ticket.assigned_tech_id !== userId)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -29,7 +37,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   );
 
   return NextResponse.json({
-    ticket: ticketResult.rows[0],
+    ticket,
     replies: repliesResult.rows,
     history: historyResult.rows,
   });
@@ -38,7 +46,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 // PATCH /api/tickets/:id
 // Body: { body?, status? }
 // Adds a public reply and/or changes status. The author is the session
-// user, not client-supplied — a caller can only ever post as themselves.
+// user, not client-supplied — a caller can only ever post as themselves,
+// and only on a ticket they're the requester or assigned technician for.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const authorId = getSessionUserIdFromRequest(req);
   if (!authorId) {
@@ -46,11 +55,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   const { id } = await params;
+
+  const ticketResult = await pool.query(
+    `SELECT requester_id, assigned_tech_id FROM tickets WHERE id = $1`,
+    [id]
+  );
+  const ticket = ticketResult.rows[0];
+  if (!ticket || (ticket.requester_id !== authorId && ticket.assigned_tech_id !== authorId)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const { body, status } = await req.json();
 
   try {
-    const ticket = await addReplyAndUpdateStatus({ ticketId: id, authorId, body, status });
-    return NextResponse.json({ ticket });
+    const updated = await addReplyAndUpdateStatus({ ticketId: id, authorId, body, status });
+    return NextResponse.json({ ticket: updated });
   } catch (err) {
     console.error(err);
     return NextResponse.json({ error: "Failed to update ticket" }, { status: 500 });

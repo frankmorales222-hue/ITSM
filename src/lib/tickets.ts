@@ -94,6 +94,35 @@ export async function getDefaultTeamId(): Promise<string | null> {
   return result.rows[0]?.id ?? null;
 }
 
+// Internal notes are a separate table from ticket_replies specifically so
+// they can never leak into an employee-facing query by accident.
+export async function getNotesForTicket(ticketId: string) {
+  const result = await pool.query(
+    `SELECT n.*, u.display_name AS author_name
+     FROM ticket_notes n
+     JOIN users u ON u.id = n.author_id
+     WHERE n.ticket_id = $1
+     ORDER BY n.created_at ASC`,
+    [ticketId]
+  );
+  return result.rows;
+}
+
+export async function addNote({
+  ticketId,
+  authorId,
+  body,
+}: {
+  ticketId: string;
+  authorId: string;
+  body: string;
+}) {
+  await pool.query(
+    `INSERT INTO ticket_notes (ticket_id, author_id, body) VALUES ($1, $2, $3)`,
+    [ticketId, authorId, body]
+  );
+}
+
 export interface AddReplyInput {
   ticketId: string;
   authorId: string;

@@ -1,19 +1,24 @@
-// Phase-1 stand-in for real auth: no passwords exist in the schema yet, so
-// this issues a signed session cookie after confirming the email belongs to
-// an active seeded user. That's weaker than password/SSO auth, but it's a
-// real improvement over what it replaces — routes no longer trust a raw
-// userId a client can type into a query string or request body; they trust
-// only a cookie the server signed. Swap this for real credential checking
-// (or SSO) before this touches real employee data.
+// Real credential login: email + password, checked against users.password_hash
+// (scrypt, see src/lib/password.ts). Seeded users before migration
+// 002_add_password.sql have no password set and can't log in until one is —
+// phase 1 has no self-serve "set a password" flow yet, since the eventual
+// plan is SSO, not a password reset UI to build and then throw away.
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { pool } from "@/lib/db";
+import { verifyPassword } from "@/lib/password";
+import { isRateLimited } from "@/lib/rate-limit";
 import {
   createSessionCookieValue,
   SESSION_COOKIE_NAME,
   SESSION_MAX_AGE_SECONDS,
 } from "@/lib/session";
+
+const ERROR_MESSAGES: Record<string, string> = {
+  invalid: "Invalid email or password.",
+  rate_limited: "Too many attempts. Try again in a minute.",
+};
 
 async function login(formData: FormData) {
   "use server";
@@ -21,15 +26,24 @@ async function login(formData: FormData) {
   const email = String(formData.get("email") ?? "")
     .trim()
     .toLowerCase();
+  const password = String(formData.get("password") ?? "");
+
+  const hdrs = await headers();
+  const ip = hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+
+  if (isRateLimited(`email:${email}`) || isRateLimited(`ip:${ip}`)) {
+    redirect("/login?error=rate_limited");
+  }
 
   const result = await pool.query(
-    `SELECT id FROM users WHERE lower(email) = $1 AND is_active = true`,
+    `SELECT id, password_hash FROM users WHERE lower(email) = $1 AND is_active = true`,
     [email]
   );
   const user = result.rows[0];
 
-  if (!user) {
-    redirect("/login?error=1");
+  const valid = user?.password_hash && (await verifyPassword(password, user.password_hash));
+  if (!valid) {
+    redirect("/login?error=invalid");
   }
 
   const store = await cookies();
@@ -50,23 +64,25 @@ export default async function LoginPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
+  const errorMessage = error ? ERROR_MESSAGES[error] ?? ERROR_MESSAGES.invalid : null;
 
   return (
-    <main style={{ padding: 24, fontFamily: "sans-serif", maxWidth: 360 }}>
-      <h1>Log in</h1>
-      <p style={{ color: "#666" }}>
-        Enter the email of a seeded user. There's no password yet — see the
-        comment at the top of this file before pointing this at real data.
-      </p>
-      {error && <p style={{ color: "crimson" }}>No active user with that email.</p>}
-      <form action={login}>
-        <label htmlFor="email">Email</label>
-        <br />
-        <input id="email" name="email" type="email" required style={{ width: "100%" }} />
-        <button type="submit" style={{ marginTop: 12 }}>
-          Log in
-        </button>
-      </form>
+    <main>
+      <div className="card" style={{ maxWidth: 360, margin: "40px auto" }}>
+        <h1>Log in</h1>
+        {errorMessage && <p className="error">{errorMessage}</p>}
+        <form action={login}>
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input id="email" name="email" type="email" required />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input id="password" name="password" type="password" required />
+          </div>
+          <button type="submit">Log in</button>
+        </form>
+      </div>
     </main>
   );
 }
