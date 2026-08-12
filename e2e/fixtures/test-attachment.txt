@@ -1,0 +1,1 @@
+Photo of the laptop LED status (e2e fixture).

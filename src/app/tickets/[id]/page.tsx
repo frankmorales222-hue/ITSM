@@ -181,7 +181,7 @@ export default async function TicketDetailPage({
 
         <h2>Reply</h2>
         {error && <p className="error">{error}</p>}
-        <form action={submitReply} encType="multipart/form-data">
+        <form action={submitReply}>
           <div className="field">
             <textarea name="body" rows={4} placeholder="Write a reply..." />
           </div>

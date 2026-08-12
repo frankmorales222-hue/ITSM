@@ -43,21 +43,21 @@ and attachments. Session auth gates all of it.
 - `docker-compose.yml` — Postgres, Redis, MinIO for local dev
 - `scripts/seed-technician.ts` — bootstraps the first technician (`npm run
   seed:technician`), see [Setup](#setup)
+- `playwright.config.ts`, `e2e/` — browser E2E tests, see [Testing](#testing)
 - `Dockerfile` — multi-stage build for the app itself (Next.js standalone
   output). Built and run locally against the compose infra to confirm it
   works; nowhere to deploy it yet — see [Deployment](#deployment)
 - `.github/workflows/ci.yml` — type-check, unit tests, integration tests,
-  and a production build on every push/PR. Verified locally end-to-end
-  with [`act`](https://github.com/nektos/act) (no GitHub remote is
-  configured on this repo, so it's never run on GitHub itself) — that run
-  is what caught `psql` not being on the runner image, hence the explicit
-  `apt-get install postgresql-client` step
+  E2E tests, and a production build on every push/PR. Verified locally
+  end-to-end with [`act`](https://github.com/nektos/act) (no GitHub
+  remote is configured on this repo, so it's never run on GitHub itself)
+  — that run is what caught `psql` not being on the runner image, hence
+  the explicit `apt-get install postgresql-client` step
 
 ## What's deliberately NOT here yet
 
 - SSO/real identity provider — see [SSO](#sso) below
 - A caller for the email intake webhook — see [Email intake](#email-intake)
-- Page-level and browser E2E tests — see [Testing](#testing)
 
 ## Setup
 
@@ -183,11 +183,32 @@ Each test truncates and reseeds the tables it needs
 (`src/lib/test-fixtures.ts`) rather than relying on leftover state, so
 they can run in any order.
 
-Not covered yet: the pages themselves (Server Component rendering, the
-`redirect()`-to-`/login` behavior, form submission through actual HTML) —
-that needs a browser driving the real app (e.g. Playwright), which isn't
-set up. The route handlers you'd hit *through* those pages are covered;
-the React layer rendering the forms that call them isn't.
+E2E tests (`playwright.config.ts`, `e2e/`) drive a real Chromium browser
+against a real running server — the layer the two suites above can't
+reach: Server Component rendering, `redirect()` behavior, actual HTML
+form submission (including a real file upload via `setInputFiles`, which
+worked with Playwright but wasn't possible earlier in this project's
+history with a different, more limited browser-automation tool). Needs
+its own database (`itsm_e2e`) and Chromium itself:
+
+```bash
+createdb itsm_e2e
+TEST_DATABASE_URL=postgresql://postgres:dev@localhost:5432/itsm_e2e npm run migrate:test
+npx playwright install --with-deps chromium   # once
+npm run test:e2e
+```
+
+Playwright starts its own `next dev` on port 3100 against a distinct
+`.next-e2e` build directory (see `next.config.mjs`) and a separate
+logical Redis DB (`redis://localhost:6379/1`) — both exist specifically
+so this can run at the same time as a `npm run dev` you already have open
+on port 3000 without the two fighting over the same build output or
+sharing (and tripping) the same login rate-limit counters.
+
+Covers the golden path end to end: login → file a ticket → open it,
+attach a file, reply, resolve it → see it in the technician queue →
+log out and confirm the session is actually gone. Plus the auth edge
+cases: unauthenticated redirect, invalid credentials.
 
 ## Deployment
 

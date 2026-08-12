@@ -72,3 +72,21 @@ jobs:
         run: |
           npm run migrate
           npm run build
+
+      - name: Start MinIO (no GH Actions service supports its custom command)
+        run: |
+          docker run -d --name minio -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data --console-address ":9001"
+          timeout 30 sh -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 1; done'
+
+      - name: Create and migrate e2e database
+        run: |
+          psql "postgresql://postgres:dev@localhost:5432/postgres" -c "CREATE DATABASE itsm_e2e"
+          TEST_DATABASE_URL="postgresql://postgres:dev@localhost:5432/itsm_e2e" npm run migrate:test
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E tests
+        run: npm run test:e2e
