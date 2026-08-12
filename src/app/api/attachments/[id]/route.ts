@@ -1,8 +1,6 @@
-import path from "path";
-import fs from "fs/promises";
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
-import { getAttachmentById, UPLOADS_DIR } from "@/lib/attachments";
+import { getAttachmentById, getAttachmentBytes } from "@/lib/attachments";
 import { getSessionUserIdFromRequest } from "@/lib/auth";
 
 // GET /api/attachments/:id — serves the file. Gated to the ticket's
@@ -28,8 +26,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const buffer = await fs.readFile(path.join(UPLOADS_DIR, attachment.storage_path));
-  return new NextResponse(buffer, {
+  const buffer = await getAttachmentBytes(attachment.storage_path);
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": attachment.content_type,
       "Content-Disposition": `attachment; filename="${encodeURIComponent(attachment.file_name)}"`,

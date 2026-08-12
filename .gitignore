@@ -21,9 +21,6 @@ yarn-error.log*
 .env
 .env*.local
 
-# uploaded ticket attachments (local-disk dev storage, see src/lib/attachments.ts)
-/uploads
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -6,19 +6,23 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "migrate": "psql \"$DATABASE_URL\" -f migrations/001_init.sql && psql \"$DATABASE_URL\" -f migrations/002_add_password.sql"
+    "test": "vitest run",
+    "migrate": "psql \"$DATABASE_URL\" -f migrations/001_init.sql && psql \"$DATABASE_URL\" -f migrations/002_add_password.sql && psql \"$DATABASE_URL\" -f migrations/003_add_password_setup_token.sql"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1108.0",
+    "ioredis": "^6.0.0",
     "next": "^15.0.0",
+    "pg": "^8.12.0",
     "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "pg": "^8.12.0"
+    "react-dom": "^18.3.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.0",
     "@types/node": "^20.14.0",
+    "@types/pg": "^8.11.0",
     "@types/react": "^18.3.0",
-    "@types/pg": "^8.11.0"
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.10"
   },
   "allowScripts": {
     "sharp@0.34.5": true

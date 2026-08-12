@@ -1,8 +1,6 @@
 // Real credential login: email + password, checked against users.password_hash
-// (scrypt, see src/lib/password.ts). Seeded users before migration
-// 002_add_password.sql have no password set and can't log in until one is —
-// phase 1 has no self-serve "set a password" flow yet, since the eventual
-// plan is SSO, not a password reset UI to build and then throw away.
+// (scrypt, see src/lib/password.ts). A user with no password set yet gets
+// one via a technician-issued link — see src/app/set-password/page.tsx.
 
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -31,7 +29,11 @@ async function login(formData: FormData) {
   const hdrs = await headers();
   const ip = hdrs.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
-  if (isRateLimited(`email:${email}`) || isRateLimited(`ip:${ip}`)) {
+  const [emailLimited, ipLimited] = await Promise.all([
+    isRateLimited(`email:${email}`),
+    isRateLimited(`ip:${ip}`),
+  ]);
+  if (emailLimited || ipLimited) {
     redirect("/login?error=rate_limited");
   }
 
@@ -61,15 +63,16 @@ async function login(formData: FormData) {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; setup?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, setup } = await searchParams;
   const errorMessage = error ? ERROR_MESSAGES[error] ?? ERROR_MESSAGES.invalid : null;
 
   return (
     <main>
       <div className="card" style={{ maxWidth: 360, margin: "40px auto" }}>
         <h1>Log in</h1>
+        {setup === "success" && <p>Password set. You can log in now.</p>}
         {errorMessage && <p className="error">{errorMessage}</p>}
         <form action={login}>
           <div className="field">

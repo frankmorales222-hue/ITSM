@@ -6,20 +6,26 @@ and attachments. Session auth gates all of it.
 
 ## What's here
 
-- `migrations/001_init.sql`, `migrations/002_add_password.sql` — Postgres
-  schema (seed categories + a default team) plus `users.password_hash`
+- `migrations/001_init.sql`, `002_add_password.sql`,
+  `003_add_password_setup_token.sql` — Postgres schema (seed categories +
+  a default team) plus `users.password_hash` and the setup-token columns
 - `src/lib/db.ts` — Postgres connection pool
 - `src/lib/assignment.ts` — round-robin assignment logic
 - `src/lib/priority.ts` — impact × urgency → priority calculation
 - `src/lib/tickets.ts` — ticket creation, reply/status updates, internal
   notes; shared by the web routes and the email intake webhook
-- `src/lib/attachments.ts` — local-disk attachment storage (see
-  [Attachments](#attachments) below)
+- `src/lib/attachments.ts` — S3-compatible (MinIO locally) attachment
+  storage
 - `src/lib/session.ts`, `src/lib/auth.ts` — signed session cookie +
   helpers for reading it in Server Components/Actions and Route Handlers
 - `src/lib/password.ts` — scrypt password hashing (no external dependency)
-- `src/lib/rate-limit.ts` — in-memory rate limiter for `/login`
+- `src/lib/rate-limit.ts` — Redis-backed rate limiter for `/login`
+- `src/lib/password-setup.ts` — one-time technician-issued password setup
+  tokens (see [Password setup](#password-setup))
 - `src/app/login/page.tsx`, `src/app/api/auth/logout/route.ts` — auth
+- `src/app/set-password/page.tsx` — where a setup link lands
+- `src/app/technician/users/page.tsx` — technician view for generating
+  setup links
 - `src/app/api/tickets/route.ts` — create ticket (assigns automatically) +
   list tickets, scoped to the session user
 - `src/app/api/tickets/[id]/route.ts` — get ticket + conversation, post a
@@ -37,23 +43,33 @@ and attachments. Session auth gates all of it.
 
 ## What's deliberately NOT here yet
 
-- SSO/real identity provider — login is email + password (scrypt-hashed),
-  which is a real improvement over trusting a raw `userId` param, but it's
-  still not what should sit in front of real employee data long-term
+- SSO/real identity provider — see [SSO](#sso) below
 - A caller for the email intake webhook — see [Email intake](#email-intake)
-- MinIO/S3 for attachments — currently local disk under `./uploads`, fine
-  for one dev machine, not for anything deployed
-- A shared store for rate limiting / sessions — both are in-memory,
-  single-process only; fine for phase 1, not for multiple instances
+- Integration/E2E tests — see [Testing](#testing)
 
 ## Setup
+
+Needs Postgres, Redis, and MinIO. Locally, that's three Docker containers:
+
+```bash
+docker run -d --name itsm-postgres -p 5432:5432 -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=itsm postgres:16
+docker run -d --name itsm-redis -p 6379:6379 redis:7-alpine
+docker run -d --name itsm-minio -p 9000:9000 -p 9001:9001 \
+  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+  minio/minio server /data --console-address ":9001"
+```
+
+Then:
 
 ```bash
 npm install
 cp .env.example .env       # fill in DATABASE_URL, SESSION_SECRET, EMAIL_WEBHOOK_SECRET
-npm run migrate            # runs migrations/001_init.sql and 002_add_password.sql
+npm run migrate            # runs migrations/001, 002, and 003 in order
 npm run dev
 ```
+
+If the containers already exist from a previous run, `docker start
+itsm-postgres itsm-redis itsm-minio` instead of `docker run` again.
 
 You'll need at least one row in `users` (with a `password_hash` — see
 `src/lib/password.ts`) and `team_members` (linked to the seeded "IT
@@ -81,6 +97,62 @@ once there's a real mailbox:
    subject, body }`).
 2. **Scheduled poller** — a small job (e.g. IMAP via `imapflow`) that runs
    on a schedule, reads new messages, and POSTs each one here.
+
+## Password setup
+
+A user's first password isn't self-requested — `/technician/users` lists
+every active user without a `password_hash` and lets a technician generate
+a one-time link (`/set-password?token=...`, 24h expiry, single-use) to send
+them directly.
+
+This is deliberate, not a shortcut: a "forgot password" form that emails a
+reset link proves the requester owns that email address. There's no
+outbound email in this environment (same gap as [email
+intake](#email-intake)), so a self-requested link would just hand a
+working credential to whoever typed the address — no verification at all.
+Routing it through an already-authenticated technician instead reuses a
+trust boundary that already exists (technicians can already see and act on
+tickets), rather than a proof of identity via an email channel that isn't there.
+
+The token only exists as plaintext twice: in the technician's browser for
+the one page load where it's generated, and in the link they send. The
+database stores its SHA-256 hash, and the handoff from the server action
+that creates it to the page that displays it goes through a 60-second,
+single-read Redis slot — never a URL — so it can't end up sitting in
+browser history or a server access log.
+
+## SSO
+
+Not implemented, and not scaffolded either — here's why. Real SSO (SAML or
+OIDC) needs a real identity provider tenant (Okta, Azure AD, Google
+Workspace) with a registered client ID/secret and redirect URI, none of
+which exist in this dev environment. A library like Auth.js could be
+wired up against a generic OIDC config read from env vars, but until
+there's a real IdP to redirect to and back from, that integration can't
+actually be exercised — it would be code nobody could verify works, same
+problem as the email poller below.
+
+The current design keeps this a contained swap when a real IdP shows up:
+credential verification is centralized in `login()` inside
+`src/app/login/page.tsx`, and session issuance/verification
+(`src/lib/session.ts`, `src/lib/auth.ts`) doesn't care how identity was
+established. Replacing SSO means replacing that one function with an
+OIDC callback handler; nothing downstream changes.
+
+## Testing
+
+```bash
+npm test
+```
+
+Vitest, covering the pure/self-contained logic: priority calculation,
+session cookie signing (including tamper and expiry rejection), password
+hashing, and the rate limiter (against a real Redis, not a mock — the
+thing worth checking is the actual INCR+EXPIRE behavior). No coverage yet
+for the DB-touching paths (ticket creation, assignment, routes) — that
+needs a test-database story (isolated schema/transaction rollback per
+test) that doesn't exist yet, and route/page handlers aren't unit-testable
+in isolation the way the lib functions are.
 
 ## Full reference
 
