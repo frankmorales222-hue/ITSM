@@ -6,7 +6,7 @@
 
 import { redirect, notFound } from "next/navigation";
 import { pool } from "@/lib/db";
-import { addReplyAndUpdateStatus, getNotesForTicket, addNote } from "@/lib/tickets";
+import { addReplyAndUpdateStatus, getNotesForTicket, addNote, reassignTicket } from "@/lib/tickets";
 import {
   getAttachmentsForTicket,
   saveAttachment,
@@ -15,6 +15,7 @@ import {
   AttachmentValidationError,
 } from "@/lib/attachments";
 import { getSessionUserId, isTechnician } from "@/lib/auth";
+import { getActiveTechnicians } from "@/lib/ticket-filters";
 
 const STATUSES = [
   "open",
@@ -30,7 +31,14 @@ const STATUSES = [
 ];
 
 async function getTicket(id: string) {
-  const ticketResult = await pool.query(`SELECT * FROM tickets WHERE id = $1`, [id]);
+  const ticketResult = await pool.query(
+    `SELECT t.*, c.name AS category_name, u.display_name AS assigned_tech_name
+     FROM tickets t
+     LEFT JOIN categories c ON c.id = t.category_id
+     LEFT JOIN users u ON u.id = t.assigned_tech_id
+     WHERE t.id = $1`,
+    [id]
+  );
   if (ticketResult.rows.length === 0) {
     return null;
   }
@@ -79,9 +87,10 @@ export default async function TicketDetailPage({
   }
 
   const isTech = await isTechnician(sessionUserId);
-  const [attachments, notes] = await Promise.all([
+  const [attachments, notes, technicians] = await Promise.all([
     getAttachmentsForTicket(id),
     isTech ? getNotesForTicket(id) : Promise.resolve([]),
+    isTech ? getActiveTechnicians() : Promise.resolve([]),
   ]);
 
   async function submitReply(formData: FormData) {
@@ -121,6 +130,19 @@ export default async function TicketDetailPage({
     redirect(`/tickets/${id}`);
   }
 
+  async function submitReassign(formData: FormData) {
+    "use server";
+    const actorId = await getSessionUserId();
+    if (!actorId || !(await isTechnician(actorId))) {
+      redirect("/login");
+    }
+    const newTechId = String(formData.get("technician") ?? "");
+    if (newTechId) {
+      await reassignTicket({ ticketId: id, newTechId, reassignedById: actorId });
+    }
+    redirect(`/tickets/${id}`);
+  }
+
   async function submitNote(formData: FormData) {
     "use server";
     const authorId = await getSessionUserId();
@@ -147,6 +169,7 @@ export default async function TicketDetailPage({
         <p>
           <span className="badge">{ticket.status}</span>{" "}
           <span className="badge">{ticket.priority}</span>
+          {ticket.category_name && <span className="badge">{ticket.category_name}</span>}
         </p>
         <p style={{ whiteSpace: "pre-wrap" }}>{ticket.description}</p>
       </div>
@@ -203,6 +226,33 @@ export default async function TicketDetailPage({
           <button type="submit">Submit</button>
         </form>
       </div>
+
+      {isTech && (
+        <div className="card">
+          <h2>Assignment</h2>
+          <p className="muted">
+            Currently assigned to: {ticket.assigned_tech_name ?? "Unassigned"}
+          </p>
+          <form action={submitReassign} style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
+            <div className="field" style={{ maxWidth: 240, marginBottom: 0 }}>
+              <label htmlFor="technician">Reassign to</label>
+              <select id="technician" name="technician" defaultValue={ticket.assigned_tech_id ?? ""}>
+                <option value="" disabled>
+                  Select a technician
+                </option>
+                {technicians.map((t: any) => (
+                  <option key={t.id} value={t.id}>
+                    {t.display_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button type="submit" className="secondary">
+              Reassign
+            </button>
+          </form>
+        </div>
+      )}
 
       {isTech && (
         <div className="card">
