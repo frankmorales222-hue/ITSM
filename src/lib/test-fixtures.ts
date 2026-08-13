@@ -9,7 +9,7 @@ export async function resetTestDb() {
     TRUNCATE
       ticket_notifications, inbound_email_log, ticket_status_history,
       ticket_attachments, ticket_notes, ticket_replies, tickets,
-      assignment_state, team_members, teams, users, admin_settings
+      assignment_state, team_members, teams, kb_articles, users, admin_settings
     RESTART IDENTITY CASCADE
   `);
 }
@@ -19,11 +19,13 @@ export async function createTestTeam(name = `Team ${crypto.randomUUID()}`): Prom
   return result.rows[0].id;
 }
 
-export async function createTestUser(opts: { isTechnician?: boolean } = {}): Promise<string> {
+export async function createTestUser(
+  opts: { isTechnician?: boolean; managerId?: string } = {}
+): Promise<string> {
   const email = `test-${crypto.randomUUID()}@example.com`;
   const result = await pool.query(
-    `INSERT INTO users (display_name, email, is_technician) VALUES ($1, $2, $3) RETURNING id`,
-    ["Test User", email, opts.isTechnician ?? false]
+    `INSERT INTO users (display_name, email, is_technician, manager_id) VALUES ($1, $2, $3, $4) RETURNING id`,
+    ["Test User", email, opts.isTechnician ?? false, opts.managerId ?? null]
   );
   return result.rows[0].id;
 }

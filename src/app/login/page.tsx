@@ -88,6 +88,9 @@ export default async function LoginPage({
           </div>
           <button type="submit">Log in</button>
         </form>
+        <p className="muted" style={{ marginTop: 8 }}>
+          <a href="/forgot-password">Forgot password?</a>
+        </p>
         {azureAdConfigured && (
           <>
             <p className="muted" style={{ margin: "16px 0 8px", textAlign: "center" }}>

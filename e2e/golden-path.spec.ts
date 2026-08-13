@@ -18,8 +18,9 @@ test("login, file a ticket, reply with an attachment, resolve it, see it in the 
     await page.getByRole("button", { name: "Log in" }).click();
     await expect(page).toHaveURL(/\/tickets$/);
     await expect(page.getByRole("heading", { name: "My Requests" })).toBeVisible();
-    await expect(page.getByText("No requests yet.")).toBeVisible();
   });
+
+  const row = page.locator("tr", { hasText: "E2E: laptop won't boot" });
 
   await test.step("report a problem", async () => {
     await page.getByRole("link", { name: "Report a problem" }).click();
@@ -34,18 +35,18 @@ test("login, file a ticket, reply with an attachment, resolve it, see it in the 
     await page.getByRole("button", { name: "Submit" }).click();
 
     await expect(page).toHaveURL(/\/tickets$/);
-    const row = page.locator("tr", { hasText: "E2E: laptop won't boot" });
     await expect(row).toBeVisible();
     // impact=high + urgency=high -> critical, and it's the only team
     // member so round-robin assigns it straight to "assigned". Scoped to
     // the row's badge, not just text on the page — both words also
-    // appear as options in the status filter dropdown.
+    // appear as options in the status filter dropdown. Columns are
+    // Number, Subject, Category, Status, Priority, Due, Created.
     await expect(row.locator("span.badge")).toHaveText("assigned");
-    await expect(row.getByRole("cell").nth(3)).toHaveText("critical");
+    await expect(row.getByRole("cell").nth(4)).toHaveText("critical");
   });
 
   await test.step("open the ticket, attach a file, reply, and resolve it", async () => {
-    await page.getByRole("link", { name: /^INC-\d+$/ }).click();
+    await row.getByRole("link", { name: /^INC-\d+$/ }).click();
     await expect(page.getByRole("heading", { name: /E2E: laptop won't boot/ })).toBeVisible();
     await expect(page.getByText("No attachments.")).toBeVisible();
 
@@ -64,16 +65,14 @@ test("login, file a ticket, reply with an attachment, resolve it, see it in the 
   });
 
   await test.step("see it resolved in the technician queue", async () => {
-    await page.getByRole("link", { name: "← My Requests" }).click();
-    await page.getByRole("link", { name: "Technician queue" }).click();
+    await page.getByRole("link", { name: "Technician Queue" }).click();
     await expect(page).toHaveURL(/\/technician$/);
     await expect(page.getByText("E2E: laptop won't boot")).toBeVisible();
     await expect(page.getByText("resolved: 1")).toBeVisible();
   });
 
   await test.step("log out and lose access", async () => {
-    // Log out only lives on the My Requests nav, not the technician queue.
-    await page.goto("/tickets");
+    // Log out lives in the shared nav on every authenticated page.
     await page.getByRole("button", { name: "Log out" }).click();
     await expect(page).toHaveURL(/\/login/);
 

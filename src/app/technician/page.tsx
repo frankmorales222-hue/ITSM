@@ -5,6 +5,9 @@ import { redirect } from "next/navigation";
 import { pool } from "@/lib/db";
 import { getSessionUserId } from "@/lib/auth";
 import { bulkUpdateStatus } from "@/lib/tickets";
+import { isOverdue } from "@/lib/sla";
+import Nav from "@/components/Nav";
+import ConfirmBulkStatusButton from "@/components/ConfirmBulkStatusButton";
 import {
   STATUSES,
   buildTicketWhere,
@@ -85,11 +88,7 @@ export default async function TechnicianPage({
 
   return (
     <main>
-      <nav className="nav">
-        <a href="/tickets">&larr; My Requests</a>
-        <a href="/technician/users">Users without a password</a>
-        <a href="/admin">Admin</a>
-      </nav>
+      <Nav userId={userId} />
 
       <h1>Technician Queue</h1>
 
@@ -157,9 +156,7 @@ export default async function TechnicianPage({
                 </option>
               ))}
             </select>
-            <button type="submit" className="secondary">
-              Apply to selected
-            </button>
+            <ConfirmBulkStatusButton />
           </div>
           <table>
             <thead>
@@ -170,6 +167,7 @@ export default async function TechnicianPage({
                 <th>Category</th>
                 <th>Status</th>
                 <th>Priority</th>
+                <th>Due</th>
                 <th>Created</th>
               </tr>
             </thead>
@@ -182,12 +180,37 @@ export default async function TechnicianPage({
                   <td>
                     <a href={`/tickets/${t.id}`}>{t.ticket_number}</a>
                   </td>
-                  <td>{t.subject}</td>
+                  <td>
+                    {t.subject}
+                    {t.is_escalated && (
+                      <>
+                        {" "}
+                        <span className="badge badge-overdue">Escalated</span>
+                      </>
+                    )}
+                    {t.approval_status === "pending" && (
+                      <>
+                        {" "}
+                        <span className="badge badge-overdue">Awaiting approval</span>
+                      </>
+                    )}
+                  </td>
                   <td className="muted">{t.category_name ?? "—"}</td>
                   <td>
                     <span className="badge">{t.status}</span>
                   </td>
                   <td>{t.priority}</td>
+                  <td>
+                    {t.due_at ? (
+                      isOverdue(t) ? (
+                        <span className="badge badge-overdue">Overdue</span>
+                      ) : (
+                        new Date(t.due_at).toLocaleString()
+                      )
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td>{new Date(t.created_at).toLocaleDateString()}</td>
                 </tr>
               ))}

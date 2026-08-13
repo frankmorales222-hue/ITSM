@@ -13,7 +13,12 @@ import {
   getImapConfig,
   setImapConfig,
   clearImapConfig,
+  getSmtpConfig,
+  setSmtpConfig,
+  clearSmtpConfig,
 } from "@/lib/admin-settings";
+import Nav from "@/components/Nav";
+import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
 
 async function requireTechnician(): Promise<string> {
   const userId = await getSessionUserId();
@@ -66,6 +71,30 @@ async function clearImap() {
   redirect("/admin");
 }
 
+async function saveSmtp(formData: FormData) {
+  "use server";
+  const userId = await requireTechnician();
+
+  const host = String(formData.get("host") ?? "").trim();
+  const port = Number(formData.get("port") ?? 587);
+  const user = String(formData.get("user") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+  const fromAddress = String(formData.get("fromAddress") ?? "").trim();
+  const secure = formData.get("secure") === "on";
+
+  if (host && port && fromAddress) {
+    await setSmtpConfig({ host, port, user, password, fromAddress, secure }, userId);
+  }
+  redirect("/admin");
+}
+
+async function clearSmtp() {
+  "use server";
+  await requireTechnician();
+  await clearSmtpConfig();
+  redirect("/admin");
+}
+
 export default async function AdminPage() {
   const sessionUserId = await getSessionUserId();
   if (!sessionUserId) {
@@ -75,13 +104,11 @@ export default async function AdminPage() {
     notFound();
   }
 
-  const [azureAd, imap] = await Promise.all([getAzureAdConfig(), getImapConfig()]);
+  const [azureAd, imap, smtp] = await Promise.all([getAzureAdConfig(), getImapConfig(), getSmtpConfig()]);
 
   return (
     <main>
-      <nav className="nav">
-        <a href="/technician">&larr; Technician Queue</a>
-      </nav>
+      <Nav userId={sessionUserId} />
 
       <h1>Admin</h1>
       <p className="muted">
@@ -118,9 +145,12 @@ export default async function AdminPage() {
         </form>
         {azureAd && (
           <form action={clearAzureAd} style={{ marginTop: 8 }}>
-            <button type="submit" className="secondary">
+            <ConfirmSubmitButton
+              className="secondary"
+              message="Clear the Azure AD SSO configuration? Login via SSO will stop working until it's reconfigured."
+            >
               Clear
-            </button>
+            </ConfirmSubmitButton>
           </form>
         )}
       </div>
@@ -159,9 +189,66 @@ export default async function AdminPage() {
         </form>
         {imap && (
           <form action={clearImap} style={{ marginTop: 8 }}>
-            <button type="submit" className="secondary">
+            <ConfirmSubmitButton
+              className="secondary"
+              message="Clear the IMAP configuration? Email intake will stop working until it's reconfigured."
+            >
               Clear
-            </button>
+            </ConfirmSubmitButton>
+          </form>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Outbound email (SMTP)</h2>
+        <p>
+          Status: <span className="badge">{smtp ? "configured" : "not configured"}</span>
+        </p>
+        {smtp && (
+          <p className="muted">
+            <code>
+              {smtp.fromAddress} via {smtp.host}:{smtp.port}
+              {smtp.secure ? " (TLS)" : ""}
+            </code>
+            . Saving again replaces all values.
+          </p>
+        )}
+        <form action={saveSmtp}>
+          <div className="field">
+            <label htmlFor="smtpHost">SMTP host</label>
+            <input id="smtpHost" name="host" required />
+          </div>
+          <div className="field">
+            <label htmlFor="smtpPort">Port</label>
+            <input id="smtpPort" name="port" type="number" defaultValue={587} required />
+          </div>
+          <div className="field">
+            <label htmlFor="smtpFromAddress">From address</label>
+            <input id="smtpFromAddress" name="fromAddress" type="email" required />
+          </div>
+          <div className="field">
+            <label htmlFor="smtpUser">Username (optional)</label>
+            <input id="smtpUser" name="user" />
+          </div>
+          <div className="field">
+            <label htmlFor="smtpPassword">Password (optional)</label>
+            <input id="smtpPassword" name="password" type="password" />
+          </div>
+          <div className="field">
+            <label htmlFor="smtpSecure">
+              <input id="smtpSecure" name="secure" type="checkbox" style={{ width: "auto" }} /> Use TLS
+            </label>
+          </div>
+          <button type="submit">Save</button>
+        </form>
+        {smtp && (
+          <form action={clearSmtp} style={{ marginTop: 8 }}>
+            <ConfirmSubmitButton
+              className="secondary"
+              message="Clear the SMTP configuration? Outbound email notifications will stop going out until it's reconfigured."
+            >
+              Clear
+            </ConfirmSubmitButton>
           </form>
         )}
       </div>

@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { getSessionUserId } from "@/lib/auth";
 import { pool } from "@/lib/db";
+import { isOverdue } from "@/lib/sla";
+import Nav from "@/components/Nav";
 import {
   STATUSES,
   buildTicketWhere,
@@ -57,15 +59,7 @@ export default async function TicketsPage({
 
   return (
     <main>
-      <nav className="nav">
-        <a href="/tickets/new">Report a problem</a>
-        <a href="/technician">Technician queue</a>
-        <form action="/api/auth/logout" method="POST" className="form-inline">
-          <button type="submit" className="secondary">
-            Log out
-          </button>
-        </form>
-      </nav>
+      <Nav userId={userId} />
 
       <h1>My Requests</h1>
 
@@ -111,6 +105,7 @@ export default async function TicketsPage({
               <th>Category</th>
               <th>Status</th>
               <th>Priority</th>
+              <th>Due</th>
               <th>Created</th>
             </tr>
           </thead>
@@ -120,12 +115,37 @@ export default async function TicketsPage({
                 <td>
                   <a href={`/tickets/${t.id}`}>{t.ticket_number}</a>
                 </td>
-                <td>{t.subject}</td>
+                <td>
+                  {t.subject}
+                  {t.is_escalated && (
+                    <>
+                      {" "}
+                      <span className="badge badge-overdue">Escalated</span>
+                    </>
+                  )}
+                  {t.approval_status === "pending" && (
+                    <>
+                      {" "}
+                      <span className="badge badge-overdue">Awaiting approval</span>
+                    </>
+                  )}
+                </td>
                 <td className="muted">{t.category_name ?? "—"}</td>
                 <td>
                   <span className="badge">{t.status}</span>
                 </td>
                 <td>{t.priority}</td>
+                <td>
+                  {t.due_at ? (
+                    isOverdue(t) ? (
+                      <span className="badge badge-overdue">Overdue</span>
+                    ) : (
+                      new Date(t.due_at).toLocaleString()
+                    )
+                  ) : (
+                    "—"
+                  )}
+                </td>
                 <td>{new Date(t.created_at).toLocaleDateString()}</td>
               </tr>
             ))}

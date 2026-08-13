@@ -46,6 +46,13 @@ and attachments. Session auth gates all of it.
   status change, attachments, and internal notes (technician-only)
 - `src/app/technician/page.tsx` — technician queue, grouped/counted by
   status, with filter + pagination
+- `src/lib/kb.ts`, `src/app/kb/` — minimal self-service knowledge base:
+  technician-authored articles (draft/published), searchable by everyone,
+  linked from the shared nav
+- `src/lib/approval.ts` — manager approval for Access Request/Equipment
+  Request tickets (uses the existing `users.manager_id`); blocks
+  resolving/closing a ticket while approval is pending, wired into
+  `src/app/tickets/[id]/page.tsx`
 - `src/app/globals.css` — the one stylesheet everything uses
 - `docker-compose.yml` — Postgres, Redis, MinIO for local dev
 - `scripts/seed-technician.ts` — bootstraps the first technician (`npm run
@@ -76,7 +83,7 @@ Needs Postgres, Redis, and MinIO — `docker-compose.yml` covers all three:
 docker compose up -d
 npm install
 cp .env.example .env       # fill in DATABASE_URL, SESSION_SECRET, EMAIL_WEBHOOK_SECRET
-npm run migrate            # runs migrations/001, 002, and 003 in order
+npm run migrate            # runs migrations/001 through 008 in order
 npm run dev
 ```
 
@@ -127,34 +134,80 @@ If a real inbox is instead behind a provider with inbound-parse support
 (Mailgun, Postmark, SendGrid), point its webhook at `/api/email/inbound`
 directly instead of running the poller — same endpoint, no poller needed.
 
+## Notifications
+
+`ticket_notifications` (already in the phase-1 schema) backs two channels:
+
+- **In-app** (`src/lib/notifications.ts`): a row per event, `/notifications`
+  to view them, an unread-count badge in the nav on `/tickets` and
+  `/technician`. Always written, synchronously, inside the same transaction
+  as the change that triggered it (ticket assigned/reassigned, a reply from
+  the other party, status changed/resolved/closed) — never for a user's own
+  action on their own ticket.
+- **Email**: fired after that transaction commits, not inside it, so a slow
+  or unreachable SMTP server can't hold a ticket-mutation transaction open.
+  Configured through [`/admin`](#admin-settings) (`src/lib/mailer.ts`,
+  `nodemailer`); if nothing's configured, `sendMail` returns `false` and the
+  in-app notification is all that happens — no error, no retry queue, since
+  phase 1 has no background worker to retry from. A `ticket_notifications`
+  row with `channel = 'email'` is only written once the send actually
+  succeeds, so that table doubles as a "did this go out" log.
+
+Verified against a real (local, temporary) SMTP server (`axllent/mailpit`,
+not part of the checked-in setup): configured `/admin` to point at it,
+reassigned a ticket to a second technician, and confirmed the email
+actually arrived in Mailpit's inbox with the right subject/recipient, and
+that a `ticket_notifications` row with `channel = 'email'` and a `sent_at`
+was written.
+
 ## Password setup
 
-A user's first password isn't self-requested — `/technician/users` lists
-every active user without a `password_hash` and lets a technician generate
-a one-time link (`/set-password?token=...`, 24h expiry, single-use) to send
-them directly.
+Two ways to get a working password, both landing on the same
+`/set-password?token=...` page (24h expiry, single-use,
+`src/lib/password-setup.ts`):
 
-This is deliberate, not a shortcut: a "forgot password" form that emails a
-reset link proves the requester owns that email address. There's no
-outbound email in this environment (same gap as [email
-intake](#email-intake)), so a self-requested link would just hand a
-working credential to whoever typed the address — no verification at all.
-Routing it through an already-authenticated technician instead reuses a
-trust boundary that already exists (technicians can already see and act on
-tickets), rather than a proof of identity via an email channel that isn't there.
+- **Technician-issued**, for a user's *first* password: `/technician/users`
+  lists every active user without a `password_hash` and lets a technician
+  generate a link to send them directly (Slack, in person, whatever's
+  real). This exists because a brand-new hire has no established inbox
+  trust yet, and it reuses a trust boundary that already exists
+  (technicians can already see and act on tickets).
+- **Self-service**, for resetting a password you already have: `/forgot-password`
+  (linked from `/login`) takes an email, and — now that [outbound
+  email](#notifications) is real — sends the reset link to whatever
+  address is already on file for that account, never one typed fresh into
+  the form. Receiving it is what proves ownership. The response is
+  identical (redirects to the same "if that email is registered..." page)
+  whether or not the address matches a real, active account, and whether
+  or not sending actually succeeds — the point is that nothing about the
+  response should let someone probe which emails have accounts. Requests
+  are rate-limited per email and per IP (`src/lib/rate-limit.ts`,
+  3/15min and 10/15min) since each one costs a real outbound send.
+  One accepted tradeoff: the matched-account path does a token write plus
+  an SMTP round trip and the no-match path doesn't, so response *timing*
+  isn't perfectly constant between the two — full constant-time behavior
+  wasn't worth the complexity here.
 
-The token only exists as plaintext twice: in the technician's browser for
-the one page load where it's generated, and in the link they send. The
-database stores its SHA-256 hash, and the handoff from the server action
-that creates it to the page that displays it goes through a 60-second,
-single-read Redis slot — never a URL — so it can't end up sitting in
-browser history or a server access log.
+The token only exists as plaintext twice: wherever it's generated (a
+technician's browser for the one page load, or the reset email), and in
+the link. The database stores its SHA-256 hash, and for the
+technician-issued path the handoff from the server action that creates it
+to the page that displays it goes through a 60-second, single-read Redis
+slot — never a URL — so it can't end up sitting in browser history or a
+server access log.
+
+Verified against a real (local, temporary) SMTP server (`axllent/mailpit`):
+requested a reset for a real account, retrieved the actual email via
+Mailpit's API, followed its link, set a new password, and logged in with
+it — then confirmed the same link is rejected on a second use ("invalid or
+expired"), and that requesting a reset for an email with no account
+produces the identical response with no email sent.
 
 ## Admin settings
 
 `/admin` (technician-only) holds integration config that used to require
-editing `.env` and restarting: Azure AD and IMAP credentials, entered
-through a form and encrypted at rest (AES-256-GCM,
+editing `.env` and restarting: Azure AD, IMAP, and SMTP credentials,
+entered through a form and encrypted at rest (AES-256-GCM,
 `src/lib/admin-settings.ts`, key in `ADMIN_SETTINGS_ENCRYPTION_KEY`).
 Secrets are write-only in the UI — once saved, the form shows only
 "configured", never the value back. A "Clear" action removes a section's

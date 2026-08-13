@@ -36,7 +36,8 @@ async function setPassword(formData: FormData) {
 const ERROR_MESSAGES: Record<string, string> = {
   too_short: "Password must be at least 8 characters.",
   mismatch: "Passwords don't match.",
-  invalid: "This link is invalid or has expired. Ask a technician for a new one.",
+  invalid:
+    "This link is invalid or has expired. Request a new one at /forgot-password, or ask a technician.",
 };
 
 export default async function SetPasswordPage({
@@ -51,7 +52,10 @@ export default async function SetPasswordPage({
       <main>
         <div className="card" style={{ maxWidth: 360, margin: "40px auto" }}>
           <h1>Set your password</h1>
-          <p className="error">Missing setup link. Ask a technician for one.</p>
+          <p className="error">
+            Missing setup link. Request one at{" "}
+            <a href="/forgot-password">/forgot-password</a>, or ask a technician.
+          </p>
         </div>
       </main>
     );

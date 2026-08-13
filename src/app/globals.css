@@ -215,3 +215,27 @@ th {
 .form-inline {
   display: inline;
 }
+
+.badge-overdue {
+  background: #fdecea;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+@keyframes skeleton-pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.skeleton {
+  background: var(--color-border);
+  border-radius: var(--radius);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
