@@ -12,6 +12,7 @@ import {
   takeRevealToken,
   usersWithoutPassword,
 } from "@/lib/password-setup";
+import Nav from "@/components/Nav";
 
 async function generateLink(formData: FormData) {
   "use server";
@@ -61,9 +62,7 @@ export default async function TechnicianUsersPage({
 
   return (
     <main>
-      <nav className="nav">
-        <a href="/technician">&larr; Technician Queue</a>
-      </nav>
+      <Nav userId={sessionUserId} />
 
       <h1>Users without a password</h1>
 

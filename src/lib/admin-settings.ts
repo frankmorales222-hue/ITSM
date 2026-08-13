@@ -139,3 +139,49 @@ export async function setImapConfig(config: ImapConfig, updatedById: string): Pr
 export async function clearImapConfig(): Promise<void> {
   await Promise.all(Object.values(IMAP_KEYS).map(deleteSetting));
 }
+
+const SMTP_KEYS = {
+  host: "smtp_host",
+  port: "smtp_port",
+  user: "smtp_user",
+  password: "smtp_password",
+  fromAddress: "smtp_from_address",
+  secure: "smtp_secure",
+} as const;
+
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  fromAddress: string;
+  secure: boolean;
+}
+
+export async function getSmtpConfig(): Promise<SmtpConfig | null> {
+  const [host, port, user, password, fromAddress, secure] = await Promise.all([
+    getSetting(SMTP_KEYS.host),
+    getSetting(SMTP_KEYS.port),
+    getSetting(SMTP_KEYS.user),
+    getSetting(SMTP_KEYS.password),
+    getSetting(SMTP_KEYS.fromAddress),
+    getSetting(SMTP_KEYS.secure),
+  ]);
+  if (!host || !port || !fromAddress) return null;
+  return { host, port: Number(port), user: user ?? "", password: password ?? "", fromAddress, secure: secure === "true" };
+}
+
+export async function setSmtpConfig(config: SmtpConfig, updatedById: string): Promise<void> {
+  await Promise.all([
+    setSetting(SMTP_KEYS.host, config.host, updatedById),
+    setSetting(SMTP_KEYS.port, String(config.port), updatedById),
+    setSetting(SMTP_KEYS.user, config.user, updatedById),
+    setSetting(SMTP_KEYS.password, config.password, updatedById),
+    setSetting(SMTP_KEYS.fromAddress, config.fromAddress, updatedById),
+    setSetting(SMTP_KEYS.secure, String(config.secure), updatedById),
+  ]);
+}
+
+export async function clearSmtpConfig(): Promise<void> {
+  await Promise.all(Object.values(SMTP_KEYS).map(deleteSetting));
+}

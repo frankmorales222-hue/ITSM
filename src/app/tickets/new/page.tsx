@@ -6,6 +6,7 @@ import { pool } from "@/lib/db";
 import { createTicket as createTicketRecord, getDefaultTeamId } from "@/lib/tickets";
 import { getSessionUserId } from "@/lib/auth";
 import { isTicketCreationRateLimited } from "@/lib/rate-limit";
+import Nav from "@/components/Nav";
 
 async function getCategories() {
   const result = await pool.query(
@@ -60,9 +61,7 @@ export default async function NewTicketPage({
 
   return (
     <main>
-      <nav className="nav">
-        <a href="/tickets">&larr; My Requests</a>
-      </nav>
+      <Nav userId={userId} />
       <div className="card" style={{ maxWidth: 480 }}>
         <h1>Report a problem</h1>
         {error === "rate_limited" && (
