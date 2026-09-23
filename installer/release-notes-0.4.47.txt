@@ -1,0 +1,6 @@
+Northstar Desk 0.4.47
+
+- Fixed Create New Ticket and published Form Studio submissions bypassing configured routing rules.
+- Portal-created requests now use queue, team, and round-robin routing exactly like inbound email requests.
+- Routing decisions and matched rules are saved on portal-created tickets for diagnostics.
+- Added regression coverage for the real Create New Ticket submission path.

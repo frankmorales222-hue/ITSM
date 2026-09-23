@@ -1,0 +1,5 @@
+Northstar Desk Server 0.4.21
+
+- Restored the original Northstar color palette.
+- Added a CSS-only Administration settings scroll correction.
+- No application behavior or business logic changes.

@@ -28,7 +28,7 @@ def assetpilot_database() -> Path:
 
 def assetpilot_healthy() -> bool:
     try:
-        with urlopen(f"{settings.assetpilot_url.rstrip('/')}/health", timeout=1) as response:
+        with urlopen(f"{settings.assetpilot_internal_url.rstrip('/')}/health", timeout=1) as response:
             return response.status == 200
     except OSError:
         return False
@@ -49,7 +49,7 @@ def ensure_assetpilot_running(timeout_seconds: float = 20) -> None:
         environment.update({
             "Database__Path": str(database),
             "Backup__Path": str(database.parent / "Backups"),
-            "ASPNETCORE_URLS": settings.assetpilot_url,
+            "ASPNETCORE_URLS": settings.assetpilot_internal_url,
             "ASPNETCORE_ENVIRONMENT": "Production",
             "Logging__EventLog__LogLevel__Default": "None",
         })

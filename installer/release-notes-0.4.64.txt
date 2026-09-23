@@ -1,0 +1,8 @@
+Northstar Desk 0.4.64
+
+- Makes active home-page announcements prominent and centered, with clear information, warning, and critical severity treatment.
+- Shows the assigned user's email in Asset Inventory and uses "Not assigned" instead of stock wording when no user is assigned.
+- Delivers tray notifications through a dedicated non-secret signal directory so standard user sessions can receive ticket, chat, and announcement alerts without access to endpoint credentials.
+- Makes tray alerts open their related ticket when selected and prevents an older alert from masking a newer one.
+
+No ticket, routing, form, chat, report, or existing working workflow behavior is changed.

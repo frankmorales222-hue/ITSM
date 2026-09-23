@@ -1,10 +1,17 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import {ChatInvitationRoot} from './TicketLiveChat'
 import './styles.css'
 import './settings.css'
 import './operations.css'
 import './routing.css'
 import './asset-inventory.css'
+import './device-intelligence.css'
 import './organization-settings.css'
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>)
+import './ticket-attachments.css'
+import './helpdesk-redesign.css'
+import './agent-self-service.css'
+import './ticket-live-chat.css'
+import './infinx-theme.css'
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/><ChatInvitationRoot/></React.StrictMode>)

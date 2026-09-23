@@ -1,0 +1,222 @@
+/*
+ * Appearance-only layer.
+ *
+ * Modern Look uses the supplied Infinx palette; Dark Mode is its low-light
+ * companion. These overrides affect visual styling only.
+ */
+
+/* The selector is presentation-only and is safe for every theme. */
+.theme-picker {
+  margin-top: 18px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.theme-picker h3 { margin: 0 0 5px; font-size: 1rem; }
+.theme-picker > p { margin: 0; color: var(--muted); font-size: .82rem; }
+
+.theme-picker-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.theme-picker-options button {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-areas: "swatch title" "swatch copy";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  min-height: 84px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  box-shadow: 0 1px 2px rgba(20, 42, 34, .04);
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.theme-picker-options button:hover {
+  border-color: #4b8a78;
+  box-shadow: 0 5px 14px rgba(20, 58, 49, .10);
+  transform: translateY(-1px);
+}
+
+.theme-picker-options button.active {
+  border: 2px solid var(--forest);
+  padding: 14px;
+  box-shadow: 0 0 0 3px rgba(35, 80, 72, .13);
+}
+
+.theme-picker-options .theme-swatch {
+  grid-area: swatch;
+  display: block;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--theme-swatch, var(--forest));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.22);
+}
+
+.theme-picker-options strong { grid-area: title; font-size: .8rem; line-height: 1.2; }
+.theme-picker-options small { grid-area: copy; color: var(--muted); font-size: .66rem; line-height: 1.25; }
+.theme-picker-options button:nth-child(1) { --theme-swatch: #174b43; }
+.theme-picker-options button:nth-child(2) { --theme-swatch: #0369a1; }
+.theme-picker-options button:nth-child(3) { --theme-swatch: #11cfc9; }
+
+@media (max-width: 1080px) {
+  .theme-picker-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .theme-picker { padding: 16px; }
+  .theme-picker-options { grid-template-columns: 1fr; }
+}
+
+/*
+ * These palettes are deliberately limited to visual tokens and the established
+ * layout surfaces.  They do not alter routing, forms, sessions, APIs, or data.
+ */
+:root[data-theme="infinx-modern"] {
+  --ink: #0f172a;
+  --forest: #0369a1;
+  --mint: #dbeafe;
+  --lime: #e0f2fe;
+  --paper: #ffffff;
+  --line: #e2e8f0;
+  --muted: #64748b;
+  --orange: #dc2626;
+  --amber: #f59e0b;
+  --purple: #7c3aed;
+  --blue: #0369a1;
+}
+
+:root[data-theme="infinx-modern"] body { background: #f8fafc; color: var(--ink); }
+:root[data-theme="infinx-modern"] .top { background: rgba(255,255,255,.95); border-color: var(--line); }
+:root[data-theme="infinx-modern"] .nav { background: #ffffff; border-right: 1px solid var(--line); }
+:root[data-theme="infinx-modern"] .nav button { color: #64748b; }
+:root[data-theme="infinx-modern"] .nav button:hover,
+:root[data-theme="infinx-modern"] .nav button.active { background: #dbeafe; color: var(--forest); }
+:root[data-theme="infinx-modern"] .nav button.active { box-shadow: inset 3px 0 var(--forest); font-weight: 600; }
+:root[data-theme="infinx-modern"] .logo > span,
+:root[data-theme="infinx-modern"] .brand-mark { background: #dbeafe; color: var(--forest); font-weight: 900; }
+:root[data-theme="infinx-modern"] .top input,
+:root[data-theme="infinx-modern"] .inline-search,
+:root[data-theme="infinx-modern"] .ticket-list,
+:root[data-theme="infinx-modern"] .data-table,
+:root[data-theme="infinx-modern"] .ticket-header,
+:root[data-theme="infinx-modern"] .conversation,
+:root[data-theme="infinx-modern"] .inspector,
+:root[data-theme="infinx-modern"] .side-card,
+:root[data-theme="infinx-modern"] .chart-card,
+:root[data-theme="infinx-modern"] .time-card,
+:root[data-theme="infinx-modern"] .metrics button,
+:root[data-theme="infinx-modern"] .theme-picker,
+:root[data-theme="infinx-modern"] .theme-picker-options button { background: #ffffff; color: var(--ink); border-color: var(--line); }
+:root[data-theme="infinx-modern"] th { background: #f1f5f9; color: #475569; }
+:root[data-theme="infinx-modern"] .ticket-list article:hover { background: #f8fafc; }
+:root[data-theme="infinx-modern"] .announcements article { background: #f8fafc; border-color: var(--line); }
+:root[data-theme="infinx-modern"] .announcements p,
+:root[data-theme="infinx-modern"] .ticket-main p,
+:root[data-theme="infinx-modern"] .theme-picker > p,
+:root[data-theme="infinx-modern"] .theme-picker-options small { color: var(--muted); }
+:root[data-theme="infinx-modern"] .pulse,
+:root[data-theme="infinx-modern"] .notice { background: #f0f9ff; color: var(--ink); }
+:root[data-theme="infinx-modern"] input,
+:root[data-theme="infinx-modern"] textarea,
+:root[data-theme="infinx-modern"] select { background: #ffffff; color: var(--ink); border-color: var(--line); }
+:root[data-theme="infinx-modern"] .theme-picker-options button.active { border-color: var(--forest); box-shadow: 0 0 0 3px rgba(3,105,161,.12); }
+
+:root[data-theme="clean-enterprise"] {
+  --ink: #10233f;
+  --forest: #0b2d5c;
+  --mint: #dcecff;
+  --lime: #74b9ff;
+  --paper: #ffffff;
+  --line: #d9e3f0;
+  --muted: #63738b;
+  --orange: #e07835;
+  --amber: #d89a22;
+  --purple: #7665a7;
+  --blue: #2476bd;
+}
+
+:root[data-theme="modern-workspace"] {
+  --ink: #14263c;
+  --forest: #0d6f75;
+  --mint: #d9f5f1;
+  --lime: #80e2d6;
+  --paper: #ffffff;
+  --line: #d8e7ed;
+  --muted: #5f7487;
+  --orange: #e77d43;
+  --amber: #dca42a;
+  --purple: #7165a2;
+  --blue: #278eb0;
+}
+
+:root[data-theme="dark-mode"] {
+  color-scheme: dark;
+  --ink: #ebf7ff;
+  --forest: #071826;
+  --mint: #123947;
+  --lime: #15d8cb;
+  --paper: #0c1a29;
+  --line: #22394d;
+  --muted: #a8bac9;
+  --orange: #ff8b54;
+  --amber: #f2c45b;
+  --purple: #ad9fe0;
+  --blue: #43b6e7;
+}
+
+/* Light canvases use the normal component structure already in the product. */
+:root[data-theme="clean-enterprise"] body,
+:root[data-theme="modern-workspace"] body { background: #f4f7fb; }
+:root[data-theme="clean-enterprise"] .top { background: rgba(244,247,251,.94); }
+:root[data-theme="modern-workspace"] .top { background: rgba(243,248,250,.94); }
+
+/* Premium Dark is a complete, high-contrast palette for the existing layout. */
+:root[data-theme="dark-mode"] body,
+:root[data-theme="dark-mode"] .workspace,
+:root[data-theme="dark-mode"] .content,
+:root[data-theme="dark-mode"] .top { background: #07121f; color: var(--ink); }
+:root[data-theme="dark-mode"] .top { border-color: var(--line); }
+:root[data-theme="dark-mode"] .nav { background: #06111d; }
+:root[data-theme="dark-mode"] .nav button { color: #b8cad8; }
+:root[data-theme="dark-mode"] .nav button:hover,
+:root[data-theme="dark-mode"] .nav button.active { background: #132c3f; color: #fff; }
+:root[data-theme="dark-mode"] .nav button.active { box-shadow: inset 3px 0 var(--lime); }
+:root[data-theme="dark-mode"] .logo > span,
+:root[data-theme="dark-mode"] .brand-mark { background: #123e50; color: var(--lime); }
+:root[data-theme="dark-mode"] .top input,
+:root[data-theme="dark-mode"] .inline-search,
+:root[data-theme="dark-mode"] .ticket-list,
+:root[data-theme="dark-mode"] .data-table,
+:root[data-theme="dark-mode"] .ticket-header,
+:root[data-theme="dark-mode"] .conversation,
+:root[data-theme="dark-mode"] .inspector,
+:root[data-theme="dark-mode"] .side-card,
+:root[data-theme="dark-mode"] .chart-card,
+:root[data-theme="dark-mode"] .time-card,
+:root[data-theme="dark-mode"] .metrics button,
+:root[data-theme="dark-mode"] .theme-picker,
+:root[data-theme="dark-mode"] .theme-picker-options button { background: var(--paper); color: var(--ink); border-color: var(--line); }
+:root[data-theme="dark-mode"] th { background: #102536; color: #bed0de; }
+:root[data-theme="dark-mode"] .ticket-list article:hover { background: #102333; }
+:root[data-theme="dark-mode"] .announcements article { background: #0c1a29; border-color: var(--line); }
+:root[data-theme="dark-mode"] .announcements p,
+:root[data-theme="dark-mode"] .ticket-main p,
+:root[data-theme="dark-mode"] .theme-picker > p,
+:root[data-theme="dark-mode"] .theme-picker-options small { color: var(--muted); }
+:root[data-theme="dark-mode"] .pulse { background: #102d39; }
+:root[data-theme="dark-mode"] .notice { background: #12313a; color: var(--ink); }
+:root[data-theme="dark-mode"] input,
+:root[data-theme="dark-mode"] textarea,
+:root[data-theme="dark-mode"] select { background: #0a1724; color: var(--ink); border-color: var(--line); }
+:root[data-theme="dark-mode"] .theme-picker-options button.active { border-color: var(--lime); box-shadow: 0 0 0 3px rgba(21,216,203,.18); }

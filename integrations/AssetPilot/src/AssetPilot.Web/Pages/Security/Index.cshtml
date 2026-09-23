@@ -1,0 +1,75 @@
+@page
+@model AssetPilot.Web.Pages.Security.IndexModel
+@{
+    ViewData["Title"] = "Security";
+    ViewData["Section"] = "Security";
+}
+<div class="page-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Users &amp; access</h1><p class="muted">Invite users, assign roles, and control application permissions.</p></div></div>
+<div asp-validation-summary="All" class="validation"></div>
+<div class="admin-tab-system" data-tab-root>
+    <nav class="app-tabs" aria-label="Security sections">
+        <button type="button" class="active" data-tab-target="users">Users</button>
+        <button type="button" data-tab-target="roles">Roles &amp; permissions</button>
+    </nav>
+    <div data-tab-panel="users" class="admin-tab-panel">
+        <section class="form-section security-create-user">
+            <div class="section-title"><span class="section-icon">+</span><div><h2>Invite application user</h2><p>The user receives a secure email link and creates their own password.</p></div></div>
+            <form method="post" asp-page-handler="CreateUser">
+                <input type="hidden" asp-for="SelectedRoleId" />
+                <div class="form-grid">
+                    <label><span>Display name</span><input asp-for="NewUserDisplayName" /></label>
+                    <label><span>Email / username</span><input asp-for="NewUserEmail" type="email" /></label>
+                    <label><span>Initial role</span><select asp-for="NewUserRoleName">@foreach (var role in Model.Roles) { <option value="@role.Name">@role.Name</option> }</select></label>
+                </div>
+                <div class="form-actions"><button class="button primary" type="submit">Send invitation</button></div>
+            </form>
+        </section>
+        <section class="panel">
+            <div class="panel-heading"><div><h2>Application users</h2><p>Change a user’s role or enable and disable access.</p></div><span class="result-count">@Model.Users.Count</span></div>
+            <div class="user-card-list">
+            @foreach (var user in Model.Users)
+            {
+                <article class="user-admin-card">
+                    <div class="user-identity"><span class="user-avatar">@(string.IsNullOrWhiteSpace(user.DisplayName) ? "?" : user.DisplayName[..1].ToUpperInvariant())</span><span><strong>@user.DisplayName</strong><small>@user.Email</small></span></div>
+                    <span class="status-chip @(user.IsActive ? "active" : "retired")">@(user.IsActive ? "Enabled" : "Disabled")</span>
+                    <form method="post" asp-page-handler="SetUserRole" class="user-role-control">
+                        <input type="hidden" name="UserId" value="@user.Id" /><input type="hidden" name="SelectedRoleId" value="@Model.SelectedRoleId" />
+                        <label><span>Role</span><select name="RoleName" aria-label="Role for @user.DisplayName">@foreach (var role in Model.Roles) { <option value="@role.Name" selected="@(user.Roles.Contains(role.Name) ? "selected" : null)">@role.Name</option> }</select></label>
+                        <button class="button secondary small" type="submit">Save role</button>
+                    </form>
+                    <form method="post" asp-page-handler="ToggleUser"><input type="hidden" name="UserId" value="@user.Id" /><input type="hidden" name="SelectedRoleId" value="@Model.SelectedRoleId" /><button class="button ghost small" type="submit">@(user.IsActive ? "Disable access" : "Enable access")</button></form>
+                </article>
+            }
+            </div>
+        </section>
+    </div>
+    <div data-tab-panel="roles" class="admin-tab-panel" hidden>
+        <section class="panel">
+            <div class="panel-heading"><div><h2>Roles</h2><p>Select a role to review and configure its access.</p></div></div>
+            <div class="role-tab-list">
+            @foreach (var role in Model.Roles)
+            {
+                <a class="@(role.Id == Model.SelectedRoleId ? "active" : "")" asp-page="Index" asp-route-SelectedRoleId="@role.Id"><strong>@role.Name</strong><small>@role.AllowedPermissionCount permissions · @role.UserCount users</small><em class="role-type @(role.IsCustom ? "custom" : "template")">@(role.IsCustom ? "Custom" : "Built-in")</em></a>
+            }
+            </div>
+            <form method="post" asp-page-handler="CreateRole" class="create-role-bar"><input asp-for="NewRoleName" placeholder="New role name" /><button class="button secondary" type="submit">Create role</button></form>
+        </section>
+        <section class="panel permission-panel">
+            <div class="panel-heading"><div><h2>@Model.SelectedRoleName permissions</h2><p>@(Model.SelectedRoleIsAdministrator ? "Administrator is protected and always has complete access." : "Assigned permissions are highlighted. Editing a built-in role changes it to Custom.")</p></div>
+            @if (Model.SelectedRoleIsBuiltIn && !Model.SelectedRoleIsAdministrator) { <form method="post" asp-page-handler="ResetRole"><input type="hidden" name="SelectedRoleId" value="@Model.SelectedRoleId" /><button class="button secondary" type="submit">Reset template</button></form> }</div>
+            @foreach (var module in Model.Permissions.GroupBy(x => x.Module))
+            {
+                <h3 class="permission-module">@module.Key</h3><div class="permission-grid">
+                @foreach (var permission in module)
+                {
+                    <form method="post" asp-page-handler="SetPermission" class="permission-card @(permission.IsAllowed ? "allowed" : "") @(Model.SelectedRoleIsAdministrator ? "protected" : "")">
+                        <input type="hidden" name="SelectedRoleId" value="@Model.SelectedRoleId" /><input type="hidden" name="PermissionId" value="@permission.Id" /><input type="hidden" name="IsAllowed" value="@(!permission.IsAllowed)" />
+                        <div><strong>@permission.Name</strong>@if (permission.IsSensitive) { <span class="sensitive">Sensitive</span> }<small>@permission.Description</small><code>@permission.Key</code></div>
+                        <button class="permission-toggle" type="submit" disabled="@Model.SelectedRoleIsAdministrator" aria-pressed="@permission.IsAllowed"><span class="toggle-indicator"></span>@(permission.IsAllowed ? "Assigned" : "Not assigned")</button>
+                    </form>
+                }
+                </div>
+            }
+        </section>
+    </div>
+</div>

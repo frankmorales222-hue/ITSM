@@ -1,0 +1,36 @@
+@page
+@model AssetPilot.Web.Pages.Administration.MasterData.IndexModel
+@using AssetPilot.Domain.MasterData
+@{
+    ViewData["Title"] = "Master Data";
+    ViewData["Section"] = "Administration";
+}
+@if (TempData["Success"] is string message) { <div class="toast success">@message</div> }
+<div class="page-heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Master data</h1><p class="muted">Manage the reusable values used throughout AssetPilot.</p></div></div>
+<nav class="master-data-tabs app-tabs" aria-label="Master data sections">
+@foreach (string kind in Model.Kinds) { <a class="@(Model.Kind == kind ? "active" : "")" asp-page="Index" asp-route-kind="@kind">@ReferenceDataKinds.DisplayName(kind)</a> }
+</nav>
+<div class="master-content">
+@if (Model.CanManage)
+{
+    <section class="form-section compact-editor">
+        <form method="post" asp-page-handler="Create"><input name="Kind" type="hidden" value="@Model.Kind" />
+            <div class="section-title"><span class="section-icon">+</span><div><h2>Add @ReferenceDataKinds.DisplayName(Model.Kind).ToLowerInvariant()</h2><p>Names and codes must be unique in this section.</p></div></div>
+            <div asp-validation-summary="All" class="validation"></div>
+            <div class="form-grid"><label><span>Name *</span><input asp-for="Input.Name" /></label><label><span>Code</span><input asp-for="Input.Code" /></label><label><span>Parent record</span><select asp-for="Input.ParentId"><option value="">None</option>@foreach (var parent in Model.ParentOptions) { <option value="@parent.ReferenceDataItemId">@parent.Kind — @parent.Name</option> }</select></label><label><span>Notes</span><input asp-for="Input.Notes" /></label></div>
+            <div class="form-actions"><button class="button primary" type="submit">Add record</button></div>
+        </form>
+    </section>
+}
+<section class="panel">
+    <div class="panel-heading"><div><h2>@ReferenceDataKinds.DisplayName(Model.Kind)</h2><p>@Model.Items.Count governed records</p></div></div>
+    <form method="get" class="filter-bar"><input type="hidden" name="Kind" value="@Model.Kind" /><label class="search-field"><span>⌕</span><input name="Query" value="@Model.Query" placeholder="Search name or code" /></label><label class="check-inline"><input type="checkbox" name="ShowInactive" value="true" checked="@Model.ShowInactive" /> Show inactive</label><button class="button secondary" type="submit">Apply filter</button></form>
+    <div class="table-wrap"><table class="data-table responsive-table"><thead><tr><th>Name</th><th>Code</th><th>Parent</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+    @foreach (var item in Model.Items)
+    {
+        <tr><td data-label="Name"><strong>@item.Name</strong><small>@item.Notes</small></td><td data-label="Code">@(item.Code ?? "—")</td><td data-label="Parent">@(item.Parent?.Name ?? "—")</td><td data-label="Status"><span class="status-chip @(item.IsActive ? "active" : "retired")">@(item.IsActive ? "Active" : "Inactive")</span></td><td data-label="Actions" class="table-actions">@if (Model.CanManage) { <a class="button secondary small" asp-page="Edit" asp-route-id="@item.ReferenceDataItemId">Edit</a><form method="post" asp-page-handler="Toggle" asp-route-id="@item.ReferenceDataItemId" asp-route-kind="@Model.Kind"><button class="button ghost small" type="submit">@(item.IsActive ? "Deactivate" : "Activate")</button></form> }</td></tr>
+    }
+    @if (Model.Items.Count == 0) { <tr><td colspan="5"><div class="empty-state compact">No matching records.</div></td></tr> }
+    </tbody></table></div>
+</section>
+</div>

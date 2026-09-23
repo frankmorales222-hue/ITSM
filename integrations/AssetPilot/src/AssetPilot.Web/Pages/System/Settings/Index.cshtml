@@ -1,0 +1,149 @@
+@page
+@model AssetPilot.Web.Pages.System.Settings.IndexModel
+@{
+    ViewData["Title"] = "Application Settings";
+    ViewData["Section"] = "System";
+}
+<div class="page-heading">
+    <div><p class="eyebrow">SYSTEM</p><h1>Application Settings</h1><p class="muted">Personalize AssetPilot, choose helpful defaults, and run maintenance tools.</p></div>
+</div>
+<div asp-validation-summary="All" class="validation"></div>
+<section class="form-section branding-editor">
+    <div class="section-title"><span class="section-icon">◆</span><div><h2>Application branding</h2><p>Change the name, logo, organization, and primary interface color.</p></div></div>
+    <form method="post" asp-page-handler="Branding" enctype="multipart/form-data">
+        <div class="branding-preview">
+            @if (!string.IsNullOrWhiteSpace(Model.CurrentLogoDataUrl)) { <img src="@Model.CurrentLogoDataUrl" alt="Current logo" /> } else { <span>◆</span> }
+            <strong>@Model.Branding.ApplicationName</strong>
+        </div>
+        <div class="form-grid">
+            <label><span>Application name</span><input asp-for="Branding.ApplicationName" /></label>
+            <label><span>Organization name</span><input asp-for="Branding.OrganizationName" /></label>
+            <label><span>Primary color</span><span class="color-input"><input asp-for="Branding.AccentColor" /><input type="color" value="@Model.Branding.AccentColor" oninput="this.previousElementSibling.value=this.value" /></span></label>
+            <label><span>Logo (PNG, JPG, WebP, or SVG; maximum 1.5 MB)</span><input asp-for="LogoFile" type="file" accept=".png,.jpg,.jpeg,.webp,.svg,image/*" /></label>
+            @if (!string.IsNullOrWhiteSpace(Model.CurrentLogoDataUrl)) { <label class="check-row"><input asp-for="Branding.RemoveLogo" /> Remove current logo</label> }
+        </div>
+        <div class="form-actions"><button class="button primary" type="submit">Save branding</button></div>
+    </form>
+</section>
+<section class="panel carrier-integrations">
+    <div class="panel-heading">
+        <div>
+            <h2>Carrier tracking integrations</h2>
+            <p>Configure automatic shipment updates. Credentials are encrypted and secret values are never displayed after saving.</p>
+        </div>
+    </div>
+    <div class="carrier-integration-grid">
+        @foreach (string carrier in new[] { "UPS", "FedEx", "USPS" })
+        {
+            bool configured = Model.CarrierConfiguration.GetValueOrDefault(carrier);
+            <article class="integration-card @(configured ? "configured" : "")">
+                <div class="integration-heading">
+                    <div><strong>@carrier</strong><small>@(configured ? "Automatic tracking ready" : "Carrier website links only")</small></div>
+                    <span class="status-chip @(configured ? "active" : "pending-receipt")">@(configured ? "Configured" : "Not configured")</span>
+                </div>
+                <form method="post" asp-page-handler="CarrierCredential" class="form-stack">
+                    <input type="hidden" name="CarrierCredential.Carrier" value="@carrier" />
+                    <label>
+                        <span>Client ID</span>
+                        <input name="CarrierCredential.ClientId" autocomplete="off" required />
+                    </label>
+                    <label>
+                        <span>Client secret @(configured ? "(leave blank to keep the existing secret)" : "")</span>
+                        @if (configured)
+                        {
+                            <input name="CarrierCredential.ClientSecret" type="password" autocomplete="new-password" />
+                        }
+                        else
+                        {
+                            <input name="CarrierCredential.ClientSecret" type="password" autocomplete="new-password" required />
+                        }
+                    </label>
+                    <button class="button primary" type="submit">@(configured ? "Update credentials" : "Enable automatic tracking")</button>
+                </form>
+                @if (configured)
+                {
+                    <form method="post"
+                          asp-page-handler="RemoveCarrierCredential"
+                          asp-route-carrier="@carrier"
+                          onsubmit="return confirm('Remove @carrier automatic tracking credentials? Shipment rows will use the carrier website instead.');">
+                        <button class="button danger-outline" type="submit">Remove credentials</button>
+                    </form>
+                }
+            </article>
+        }
+    </div>
+    <div class="action-note">An OpenAI API key cannot access carrier tracking. Obtain credentials from the UPS, FedEx, or USPS developer portal.</div>
+</section>
+<section class="stock-settings-callout">
+    <span class="kpi-symbol purple">S</span>
+    <div>
+        <strong>Minimum stock levels are managed in Available Stock</strong>
+        <small>Choose the desired quantity for each equipment type. AssetPilot highlights shortages when availability falls below your warning point.</small>
+    </div>
+    <a class="button secondary" asp-page="/Assets/Stock">Manage minimum levels</a>
+</section>
+<section class="panel advanced-settings">
+    <div class="panel-heading"><div><h2>Application defaults</h2><p>Friendly defaults used when starting common workflows.</p></div></div>
+    @foreach (var setting in Model.Settings.Where(x => !x.IsSensitive
+        && x.SettingKey != "Application.Name"
+        && x.SettingKey != "Organization.Name"
+        && x.SettingKey != "Branding.LogoDataUrl"
+        && x.SettingKey != "Branding.AccentColor"
+        && x.SettingKey != "Inventory.LowStockThreshold"))
+    {
+        string displayName = setting.SettingKey switch
+        {
+            "Inventory.DefaultThresholdPercent" => "Default stock warning level",
+            "Operations.BackupReminderDays" => "Backup reminder",
+            "Shipments.DefaultCarrier" => "Default shipping carrier",
+            _ => setting.SettingKey
+        };
+        string description = setting.SettingKey switch
+        {
+            "Inventory.DefaultThresholdPercent" => "Starting warning percentage for new minimum stock levels. For example, 50 means warn below half of the desired quantity.",
+            "Operations.BackupReminderDays" => "Recommended maximum number of days between verified backups.",
+            "Shipments.DefaultCarrier" => "Carrier preselected when creating a shipment, such as UPS, FedEx, or USPS.",
+            _ => setting.Description
+        };
+        string suffix = setting.SettingKey switch
+        {
+            "Inventory.DefaultThresholdPercent" => "%",
+            "Operations.BackupReminderDays" => "days",
+            _ => ""
+        };
+        <form method="post" asp-page-handler="Setting" class="setting-row">
+            <input type="hidden" name="SettingId" value="@setting.SystemSettingId" />
+            <div><strong>@displayName</strong><small>@description</small></div>
+            <label class="setting-value"><span class="sr-only">@displayName</span><input name="SettingValue" value="@setting.Value" aria-label="@displayName" /><em>@suffix</em></label>
+            <button class="button secondary" type="submit">Save</button>
+        </form>
+    }
+</section>
+@if (User.IsInRole("Administrator"))
+{
+<section class="panel danger-zone">
+    <div class="panel-heading">
+        <div><p class="eyebrow">ADMINISTRATOR ONLY</p><h2>Fresh-start data reset</h2><p>Delete all assets, employees, shipments, assignments, import reviews, minimum stock levels, jobs, and operational history.</p></div>
+    </div>
+    <div class="action-note">Accounts, roles, permissions, branding, carrier credentials, application defaults, and master/reference data are preserved. A verified recovery backup is created before deletion.</div>
+    <form method="post" asp-page-handler="ResetBusinessData" class="form-stack padded" onsubmit="return confirm('Final confirmation: permanently delete all operational and business data?');">
+        <label class="check-row"><input asp-for="ResetAcknowledged" /> I understand that the current business data will be permanently removed from the active database.</label>
+        <label><span>Type <strong>@AssetPilot.Web.Pages.System.Settings.IndexModel.ResetPhrase</strong> to confirm</span><input asp-for="ResetConfirmation" autocomplete="off" /></label>
+        <div class="form-actions"><button class="button danger-outline" type="submit">Delete all business data</button></div>
+    </form>
+</section>
+}
+<section class="panel job-panel">
+    <div class="panel-heading"><div><h2>System maintenance</h2><p>Run a database check, create a verified backup, or refresh built-in reference data.</p></div></div>
+    <div class="page-actions padded">
+        <form method="post" asp-page-handler="RunJob" asp-route-jobType="DatabaseCheck"><button class="button secondary" type="submit">Check database</button></form>
+        <form method="post" asp-page-handler="RunJob" asp-route-jobType="Backup"><button class="button secondary" type="submit">Create verified backup</button></form>
+        <form method="post" asp-page-handler="RunJob" asp-route-jobType="SynchronizeData"><button class="button secondary" type="submit">Refresh built-in data</button></form>
+    </div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Requested</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>
+    @foreach (var job in Model.Jobs)
+    {
+        <tr><td>@job.RequestedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</td><td>@job.JobType</td><td>@job.Status</td><td>@job.ResultSummary</td></tr>
+    }
+    </tbody></table></div>
+</section>

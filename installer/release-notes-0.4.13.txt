@@ -1,0 +1,8 @@
+Northstar Desk 0.4.13
+
+- Adds a guided old-server to new-server migration package workflow.
+- Exports a fresh verified database backup, server configuration, and ticket attachments.
+- Preserves the new server database, DNS, URL, and port settings during import.
+- Preserves the old server encryption key so imported integration credentials remain readable.
+- Creates a verified safety backup of the new server before importing.
+- Adds Start menu helpers for exporting and importing migration packages.

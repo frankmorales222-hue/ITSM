@@ -1,0 +1,3 @@
+Northstar Desk 0.4.46
+
+- Create New Ticket now uses the same routing rules as inbound email, including requester-domain and organization conditions.

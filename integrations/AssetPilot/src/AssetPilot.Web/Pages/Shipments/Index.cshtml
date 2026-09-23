@@ -1,0 +1,53 @@
+@page
+@model AssetPilot.Web.Pages.Shipments.IndexModel
+@using Microsoft.AspNetCore.Authorization
+@inject IAuthorizationService AuthorizationService
+@{
+    ViewData["Title"] = "Shipments";
+    ViewData["Section"] = "Shipments";
+    bool canUpdateShipping = (await AuthorizationService.AuthorizeAsync(User, "Shipments.Edit")).Succeeded;
+    string returnUrl = Request.Path + Request.QueryString;
+}
+<div class="page-heading">
+    <div><p class="eyebrow">LOGISTICS</p><h1>Shipments</h1><p class="muted">Incoming, outgoing, return, and repair movements.</p></div>
+    <a class="button primary" asp-page="Create">+ Create shipment</a>
+</div>
+<section class="panel shipment-workspace">
+    <form method="get" class="filter-bar">
+        <label class="search-field"><span aria-hidden="true">&#9906;</span><input asp-for="Query" placeholder="Shipment, tracking, or recipient" /></label>
+        <select asp-for="Direction"><option value="">All directions</option><option>Incoming</option><option>Outgoing</option><option>Return</option><option>Repair</option></select>
+        <button class="button secondary">Apply filter</button>
+    </form>
+    <div class="shipment-list" aria-live="polite">
+    @foreach (var shipment in Model.Shipments)
+    {
+        <article class="shipment-record">
+            <header class="shipment-record-header">
+                <div><a class="asset-link" asp-page="Details" asp-route-id="@shipment.Id">@shipment.Number</a><small>Expected @(shipment.ExpectedDate?.ToString("MMM d, yyyy") ?? "—")</small></div>
+                <span class="status-chip @shipment.Status.ToLowerInvariant().Replace(" ", "-")">@shipment.Status</span>
+            </header>
+            <div class="shipment-record-details">
+                <div><small>Direction</small><strong>@shipment.Direction</strong></div>
+                <div><small>Carrier</small><strong>@(shipment.Carrier ?? "—")</strong></div>
+                <div class="tracking-value"><small>Tracking number</small><strong>@(shipment.Tracking ?? "No tracking")</strong></div>
+                <div><small>Recipient</small><strong>@(shipment.Recipient ?? "—")</strong></div>
+                <div><small>Assets</small><strong>@shipment.Items</strong></div>
+            </div>
+            <footer class="shipment-record-actions">
+                <a class="button compact secondary" asp-page="Details" asp-route-id="@shipment.Id">View shipment</a>
+                @if (canUpdateShipping && shipment.CanAutoUpdate)
+                {
+                    <form method="post" asp-page="Details" asp-page-handler="UpdateShipping" asp-route-id="@shipment.Id" asp-route-returnUrl="@returnUrl">
+                        <button class="button compact primary" type="submit">Update shipping</button>
+                    </form>
+                }
+                else if (!string.IsNullOrWhiteSpace(shipment.PublicTrackingUrl))
+                {
+                    <a class="button compact secondary" href="@shipment.PublicTrackingUrl" target="_blank" rel="noopener">Track on @shipment.CarrierDisplayName</a>
+                }
+            </footer>
+        </article>
+    }
+    @if (Model.Shipments.Count == 0) { <div class="empty-state compact"><p>No shipments match this view.</p></div> }
+    </div>
+</section>

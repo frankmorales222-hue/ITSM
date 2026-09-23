@@ -1,0 +1,45 @@
+/* The Studio lives inside the application workspace, not the full viewport.
+   Container rules keep all three columns inside that actual available width. */
+.studio{min-width:0;max-width:100%}
+.vs-shell{width:100%;max-width:100%;min-width:0;container-type:inline-size}
+.vs-toolbar,.vs-toolbar>div{min-width:0}
+.vs-workspace{width:100%;max-width:100%;min-width:0;grid-template-columns:minmax(185px,220px) minmax(0,1fr) minmax(225px,260px);overflow:hidden}
+.vs-stage,.vs-left-panel,.vs-inspector{min-width:0;max-width:100%}
+.vs-left-panel,.vs-inspector{overflow-x:hidden}
+.vs-inspector-head,.vs-property-form,.vs-template-list{min-width:0}
+.vs-inspector-head p,.vs-template-list small,.vs-switch small{overflow-wrap:anywhere}
+.vs-property-form input,.vs-property-form textarea,.vs-property-form select{min-width:0;max-width:100%}
+.vs-form-header{grid-template-columns:46px minmax(0,1fr) minmax(130px,165px);padding:23px 24px;gap:14px}
+.vs-form-icon{width:44px;height:44px;font-size:1.2rem;line-height:1;overflow:hidden}
+.vs-form-heading{min-width:0}
+.vs-form-heading h2,.vs-form-heading span{overflow-wrap:anywhere}
+.vs-service-promise{min-width:0;padding-left:14px}
+.vs-canvas-wrap,.vs-form-canvas{width:100%;min-width:0}
+
+@container(max-width:1050px){
+  .vs-workspace{grid-template-columns:190px minmax(0,1fr) 235px}
+  .vs-element-library section>div{grid-template-columns:1fr}
+  .vs-form-header{grid-template-columns:42px minmax(0,1fr)}
+  .vs-service-promise{display:none}
+  .vs-toolbar{padding:0 13px}
+  .vs-actions button{padding-inline:11px}
+}
+
+@container(max-width:880px){
+  .vs-workspace{grid-template-columns:185px minmax(0,1fr)}
+  .vs-inspector{grid-column:1/-1;border-left:0;border-top:1px solid #dce3ee;max-height:none;display:grid;grid-template-columns:240px minmax(0,1fr)}
+  .vs-inspector-head{border-bottom:0;border-right:1px solid #e6eaf0}
+  .vs-template-list{border-top:0;border-left:1px solid #e4e9ef}
+  .vs-form-header{padding:20px}
+  .vs-mode button{padding-inline:11px}
+}
+
+@container(max-width:680px){
+  .vs-workspace{grid-template-columns:1fr}
+  .vs-left-panel{display:block}
+  .vs-inspector{display:block}
+  .vs-toolbar>div:first-child small,.vs-actions .vs-secondary{display:none}
+  .vs-stage-tools>span{display:none}
+  .vs-form-header{grid-template-columns:38px minmax(0,1fr)}
+  .vs-form-heading h2{font-size:1.05rem}
+}

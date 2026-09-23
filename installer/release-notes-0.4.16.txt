@@ -1,0 +1,4 @@
+Northstar Desk 0.4.16
+
+Theme-only release plus the no-code Windows agent installer flow. The displayed
+version is now synchronized across the UI, backend, and installer metadata.

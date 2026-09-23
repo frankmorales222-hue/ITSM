@@ -1,0 +1,7 @@
+Northstar Desk 0.4.60
+
+- Keeps the portal navigation fixed while the active page scrolls.
+- Keeps Notifications and Help & feedback below Settings and removes the unreadable lower profile block.
+- Makes the live chat panel more compact and easier to read.
+- Shows a clear endpoint status on tickets, including hostname and available CPU and memory usage.
+- Clearly states when no endpoint agent is found on the requester's computer.

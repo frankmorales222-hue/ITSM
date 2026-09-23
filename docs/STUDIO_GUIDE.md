@@ -2,15 +2,23 @@
 
 Northstar Studio lets each organization create service forms, approval paths, and saved reports without changing application code. Administrators open **Studio** from the main navigation.
 
+Every published request form inherits a system-controlled requester panel. It shows the Requested For profile, the authenticated Opened By user, local request date/time, and inventory assets matched by email. Authorized IT staff can request for another active user. The ticket stores an immutable requester snapshot so later directory changes do not rewrite historical context.
+
 ## Form designer
 
-1. Select **New** in the form library.
-2. Name the form and choose its ticket category.
-3. Drag fields from the palette into the canvas, or click a field type on touch devices.
-4. Drag existing fields to reorder them. Edit the label, stable field key, instructions, required state, and choices directly on the canvas.
-5. Enable **Published** when the form is ready for the service catalog, then save.
+The visual designer has three working areas: the form and field library, the live requester-facing canvas, and the properties inspector. Open an existing form or choose **New form**, then start from a blank canvas or a professional starter kit for a complete IT service request, incident, access request, or change management.
 
-Supported controls include short and long text, dropdowns, multiple choice, date, number, checkbox, email, asset, user, and section headings. Field definitions and submissions are validated again on the server. Existing submissions retain their recorded values when a form is later changed.
+Drag or click fields from the compact element list to add them, drag existing fields to reorder them, and select any field to configure its label, stable reporting key, placeholder, help text, choices, required state, and width. Hover over a field in the element library for an explanation of what it collects and when to use it. Text, email, and phone fields also support a character limit such as 8 or 25; this controls both the maximum accepted answer and the visible input length. Dropdown, radio, choice-card, and multi-select options are managed as individual rows with **Add option** and remove controls. The canvas supports desktop, tablet, and mobile previews. Full, two-thirds, half, and one-third field widths are carried into the published service-catalog form.
+
+Supported controls include short and long text, dropdowns, visual choice cards, radio groups, multi-selects, date, time, number, phone, checkbox, email, asset, user, and section headings. Field definitions and submissions are validated again on the server. Existing submissions retain their recorded values when a form is later changed.
+
+Each field can be visible, hidden, read-only, or conditionally displayed when another field has a configured answer. Conditional fields let one smart form show hardware questions after Hardware is selected, access questions after Access is selected, and so on. Hidden and non-matching required fields do not block submission.
+
+Fields using the reporting keys `impact` and `urgency` drive ticket priority calculation when submitted. **Save draft** keeps the form editable and hidden from requesters. **Save template** stores a reusable starting pattern that is also hidden from requesters. **Publish** is the only action that makes a form available in the service catalog. Saving a published form as a draft removes it from the catalog.
+
+The installation also creates **Studio Field Test Form** as an unpublished draft. It contains every supported field type, multi-option choice controls, multiple layouts, required fields, and live ITSM person/asset selectors. Use its Preview mode to test the requester experience, and publish it only if requesters should be able to submit it.
+
+Asset linking uses the authoritative ticket requester email. On every standard, Studio, or email-created ticket, ITSM compares that address case-insensitively with the assigned employee email in Asset Inventory and automatically attaches every matching active asset. Any asset selected manually is merged with those matches. The technician-facing request context includes the asset tag, hostname, device type, manufacturer/model, serial number, assigned employee, location, and status.
 
 The installation includes published Incident Report, Change Management, and IT Support forms. They are normal organization-owned Studio forms and may be changed or unpublished.
 

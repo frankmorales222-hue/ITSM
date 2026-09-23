@@ -14,6 +14,16 @@ def test_email_deduplication_and_threading(admin):
         message=db.scalar(select(EmailMessage).where(EmailMessage.message_id==first["message_id"]));assert message.attachment_metadata[0]["name"]=="screen.png"
 
 
+def test_email_reply_threads_by_ticket_number_when_provider_headers_are_missing(admin):
+    first={"message_id":"<subject-thread-first@example.test>","sender":"user1@example.test","subject":"Subject-threaded issue","text_body":"Create one ticket.","headers":{},"attachments":[]}
+    created=admin.post("/api/email/ingest",json=first);assert created.status_code==200 and created.json()["status"]=="created"
+    reply={"message_id":"<subject-thread-reply@example.test>","sender":"user1@example.test",
+           "subject":f"Re: [{created.json()['ticket_number']}] Subject-threaded issue","text_body":"Append this to the same ticket.","headers":{},"attachments":[]}
+    threaded=admin.post("/api/email/ingest",json=reply)
+    assert threaded.status_code==200 and threaded.json()["status"]=="threaded"
+    assert threaded.json()["ticket_id"]==created.json()["ticket_id"]
+
+
 def test_automatic_email_ignored(admin):
     payload={"message_id":"<automatic@example.test>","sender":"user2@example.test","subject":"Automatic reply: away","text_body":"I am away.","headers":{"Auto-Submitted":"auto-replied"},"attachments":[]}
     assert admin.post("/api/email/ingest",json=payload).json()["status"]=="ignored_automatic"
@@ -79,12 +89,13 @@ def test_employee_and_asset_support_context(admin):
     summary=admin.get("/api/assets/summary").json();assert summary["total"]>=25 and summary["assigned"]>0
     listed=admin.get("/api/assets?q=AST-10001").json();assert listed[0]["assigned_employee_email"]
     imported=admin.get("/api/assets?q=AP-LT-001").json()
-    if imported: assert imported[0]["assetpilot_url"].endswith(f"id={imported[0]['source_id']}")
+    if imported: assert imported[0]["assetpilot_url"] is None
 
 
 def test_assetpilot_one_click_launcher(admin, monkeypatch):
     from itsm import main as main_module
 
+    monkeypatch.setattr(main_module.settings, "assetpilot_enabled", True)
     monkeypatch.setattr(main_module, "ensure_assetpilot_running", lambda: None)
     with SessionLocal() as db:
         asset=db.scalar(select(Asset).where(Asset.asset_tag=="AST-10001"))
@@ -98,6 +109,22 @@ def test_assetpilot_one_click_launcher(admin, monkeypatch):
     finally:
         with SessionLocal() as db:
             asset=db.get(Asset,asset_id); asset.source=previous_source; asset.source_id=previous_source_id; db.commit()
+
+
+def test_native_inventory_remains_available_when_assetpilot_is_disabled(admin, monkeypatch):
+    from itsm import main as main_module
+
+    monkeypatch.setattr(main_module.settings, "assetpilot_enabled", False)
+    summary = admin.get("/api/assets/summary")
+    assert summary.status_code == 200
+    assert summary.json()["inventory_source"] == "Northstar Desk"
+    assert summary.json()["integration_status"] == "Native ITSM inventory"
+    assert summary.json()["assetpilot_url"] is None
+
+    status = admin.get("/api/integrations/assetpilot/status")
+    assert status.status_code == 200
+    assert status.json()["enabled"] is False
+    assert status.json()["running"] is False
 
 
 def test_admin_updates_user_availability(admin):

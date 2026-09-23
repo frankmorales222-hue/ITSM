@@ -15,7 +15,7 @@ def upgrade():
     existing_tables = inspector.get_table_names()
     if "organizations" in existing_tables and not bind.scalar(sa.text("SELECT COUNT(*) FROM organizations")):
         bind.execute(sa.text("INSERT INTO organizations (id, name, slug, timezone, support_email, support_phone, logo_url, active, created_at, updated_at) "
-                             "VALUES (1, 'Primary Organization', 'primary', 'America/New_York', '', '', '', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
+                             "VALUES (1, 'Primary Organization', 'primary', 'America/New_York', '', '', '', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"))
     config_columns = {column["name"] for column in inspector.get_columns("config_items")} if "config_items" in existing_tables else set()
     table_columns = ([sa.column("organization_id", sa.Integer)] if "organization_id" in config_columns else []) + [
                      sa.column("section", sa.String), sa.column("name", sa.String),

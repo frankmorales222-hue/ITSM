@@ -1,0 +1,1 @@
+Fixes supervised update completion tracking so successful updater runs leave the Installing state and record version 0.4.86. No database, ticket, routing, email, HTTPS certificate, port, endpoint-agent, or UI changes.

@@ -1,0 +1,5 @@
+Northstar Desk Server 0.4.20
+
+- Unified navigation backgrounds in light and dark modes.
+- Corrected Operational Pulse and report header contrast.
+- CSS/theme changes only; application behavior is unchanged.

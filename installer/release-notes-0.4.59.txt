@@ -1,0 +1,9 @@
+Northstar Desk 0.4.59
+
+- Makes requester replies clear and visible as messages to the assigned technician.
+- Keeps the ticket conversation compact, with an option to show earlier messages.
+- Adds clear search, profile, and sign-out controls at the top of the portal.
+- Limits the notification page to ticket and live-chat activity and opens the related ticket directly.
+- Adds the latest agent inventory details to ticket computer information, including IP address, uptime, and drive space.
+- Adds live-chat invitation alerts for enrolled endpoint users through the Northstar tray companion.
+- Improves scrolling containment in administration and automation views.

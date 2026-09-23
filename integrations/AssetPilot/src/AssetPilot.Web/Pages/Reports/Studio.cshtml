@@ -1,0 +1,44 @@
+@page
+@model AssetPilot.Web.Pages.Reports.StudioModel
+@using System.Text.Json
+@{ ViewData["Title"] = "Dashboard Studio"; ViewData["Section"] = "Reports"; }
+<div class="page-heading studio-heading"><div><p class="eyebrow">REPORT DESIGNER</p><h1>Dashboard Studio</h1><p class="muted">Choose what you see, how it is displayed, and the order in which it appears.</p></div><div class="page-actions"><a class="button secondary" asp-page="Index">Standard reports</a><button class="button primary" type="submit" form="studio-form">Save dashboard</button></div></div>
+<form method="post" asp-page-handler="Save" id="studio-form"><input asp-for="LayoutJson" type="hidden" value="@JsonSerializer.Serialize(Model.Layout)" /></form>
+<div class="studio-shell">
+    <aside class="panel studio-controls">
+        <div class="panel-heading"><div><h2>Dashboard controls</h2><p>Changes preview immediately.</p></div></div>
+        <div class="studio-control-list" id="studio-controls">
+        @foreach (var preference in Model.Layout)
+        {
+            var widget = Model.Widgets.First(x => x.Id == preference.Id);
+            <article class="studio-control" draggable="true" data-widget-control="@widget.Id">
+                <div class="studio-control-title"><span class="drag-handle" title="Drag to reorder">⋮⋮</span><label><input type="checkbox" checked="@preference.Visible" data-field="visible" /> <strong>@widget.Title</strong></label></div>
+                <div class="studio-control-fields"><label>View<select data-field="display"><option value="bars" selected="@(preference.Display == "bars")">Horizontal bars</option><option value="numbers" selected="@(preference.Display == "numbers")">Number cards</option><option value="table" selected="@(preference.Display == "table")">Compact table</option></select></label><label>Show<select data-field="limit">@foreach (int size in new[] { 3, 5, 8, 10, 15, 20 }) { <option value="@size" selected="@(preference.Limit == size)">Top @size</option> }</select></label></div>
+                <div class="studio-move"><button type="button" data-move="up" title="Move up">↑</button><button type="button" data-move="down" title="Move down">↓</button></div>
+            </article>
+        }
+        </div>
+        <div class="studio-control-actions"><button class="button primary full" type="submit" form="studio-form">Save dashboard</button><form method="post" asp-page-handler="Reset"><button class="button ghost full" type="submit">Restore defaults</button></form></div>
+    </aside>
+    <main class="studio-preview" id="studio-preview">
+    @foreach (var preference in Model.Layout)
+    {
+        var widget = Model.Widgets.First(x => x.Id == preference.Id);
+        int maximum = Math.Max(1, widget.Rows.Select(x => x.Count).DefaultIfEmpty(0).Max());
+        <section class="panel studio-widget" data-widget="@widget.Id" data-display="@preference.Display" data-visible="@preference.Visible.ToString().ToLowerInvariant()" data-limit="@preference.Limit">
+            <div class="panel-heading"><div><p class="eyebrow">LIVE REPORT</p><h2>@widget.Title</h2><p>@widget.Description</p></div><a asp-page="/Assets/Index">Open inventory</a></div>
+            <div class="studio-bars">@foreach (var row in widget.Rows) { <a asp-page="/Assets/Index" asp-route-Query="@row.Label" data-row><span><strong>@row.Label</strong><small>@row.Percent% of inventory</small></span><i><b style="width:@Math.Max(2, row.Count * 100 / maximum)%"></b></i><em>@row.Count</em></a> }</div>
+            <div class="studio-numbers">@foreach (var row in widget.Rows) { <a asp-page="/Assets/Index" asp-route-Query="@row.Label" data-row><strong>@row.Count</strong><span>@row.Label</span><small>@row.Percent%</small></a> }</div>
+            <div class="studio-table"><table><thead><tr><th>Category</th><th>Count</th><th>Share</th></tr></thead><tbody>@foreach (var row in widget.Rows) { <tr data-row><td>@row.Label</td><td>@row.Count</td><td>@row.Percent%</td></tr> }</tbody></table></div>
+        </section>
+    }
+    </main>
+</div>
+@section Scripts { <script>
+(() => {
+ const controls=document.getElementById('studio-controls'), preview=document.getElementById('studio-preview'), output=document.getElementById('LayoutJson'); let dragged;
+ function sync(){const layout=[...controls.querySelectorAll('[data-widget-control]')].map(c=>({Id:c.dataset.widgetControl,Visible:c.querySelector('[data-field=visible]').checked,Display:c.querySelector('[data-field=display]').value,Limit:+c.querySelector('[data-field=limit]').value})); output.value=JSON.stringify(layout); layout.forEach((p,index)=>{const w=preview.querySelector(`[data-widget="${p.Id}"]`);w.style.order=index;w.dataset.display=p.Display;w.dataset.visible=String(p.Visible);w.querySelectorAll('[data-row]').forEach((r,i)=>r.hidden=i>=p.Limit)});}
+ controls.addEventListener('change',sync); controls.addEventListener('click',e=>{const b=e.target.closest('[data-move]');if(!b)return;const c=b.closest('[data-widget-control]');if(b.dataset.move==='up'&&c.previousElementSibling)controls.insertBefore(c,c.previousElementSibling);if(b.dataset.move==='down'&&c.nextElementSibling)controls.insertBefore(c.nextElementSibling,c);sync()});
+ controls.addEventListener('dragstart',e=>{dragged=e.target.closest('[data-widget-control]');dragged?.classList.add('dragging')});controls.addEventListener('dragend',()=>{dragged?.classList.remove('dragging');dragged=null;sync()});controls.addEventListener('dragover',e=>{e.preventDefault();const over=e.target.closest('[data-widget-control]');if(dragged&&over&&over!==dragged){const box=over.getBoundingClientRect();controls.insertBefore(dragged,e.clientY<box.top+box.height/2?over:over.nextElementSibling)}});sync();
+})();
+</script> }

@@ -1,0 +1,5 @@
+Northstar Desk 0.4.15
+
+Theme-only update: adds Light, Dark, and Modern appearance choices in Settings.
+Theme selection is stored locally in the browser. No ticket, data, routing,
+authentication, integration, or workflow behavior was changed.

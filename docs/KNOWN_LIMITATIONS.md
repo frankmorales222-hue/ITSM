@@ -9,7 +9,8 @@
 - External requesters are sent to the exception queue rather than automatically created by default.
 - Restricted tickets use role and team rules rather than arbitrary access-control lists.
 - Attachments are metadata-only by design; no file content is retained.
-- SQLite supports evaluation only. Use PostgreSQL for concurrent team use.
+- SQLite supports local evaluation only. The shared deployment helper, PostgreSQL migration, HTTPS reverse-proxy configuration, and production validation are included for concurrent team use; organization-owned DNS, certificates, and PostgreSQL infrastructure must still be supplied.
+- The Windows agent now has a standalone machine-level enterprise package and central enrollment workflow. The organization must code-sign the executable and distribute it through Intune, Group Policy, or its RMM.
 - Organization isolation, organization administration, encrypted RingCentral credentials, call behavior settings, and technician-extension mapping are implemented. Live RingCentral event subscription, answered-call ticket creation, and technician screen push require the shared HTTPS/PostgreSQL deployment and organization credentials before they can be activated.
 - The local migration creates the first organization. A platform-owner provisioning console for creating additional companies is intentionally deferred until centralized authentication, PostgreSQL, backups, and operational monitoring are in place.
 - Microsoft Entra ID, Microsoft Graph, advanced automation, endpoint control, full CMDB, change/problem management, procurement, and clinical workflows are intentionally excluded.

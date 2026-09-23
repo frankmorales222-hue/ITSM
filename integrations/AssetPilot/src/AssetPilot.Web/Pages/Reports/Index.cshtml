@@ -1,0 +1,125 @@
+@page
+@model AssetPilot.Web.Pages.Reports.IndexModel
+@{
+    ViewData["Title"] = "Reports";
+    ViewData["Section"] = "Reports";
+}
+
+<div class="dashboard-hero">
+    <div>
+        <p class="eyebrow">REPORTS &amp; ANALYTICS</p>
+        <h1>Reports</h1>
+        <p>Review inventory distribution, employee custody, stock availability, shipments, and warranty risk.</p>
+    </div>
+    <div class="dashboard-hero-actions">
+        <a class="button secondary" asp-page="Studio">Customize dashboard</a>
+        <a class="button primary" asp-page="Index" asp-page-handler="Export">Export audit workbook</a>
+    </div>
+</div>
+
+<section class="executive-kpis" aria-label="Reporting summary">
+    <a class="executive-kpi @(Model.ExceptionAssets > 0 ? "needs-attention" : "")" asp-page="/Assets/Index" asp-route-View="All" asp-route-Status="">
+        <span class="kpi-symbol orange">!</span>
+        <span class="kpi-copy"><small>Asset exceptions</small><strong>@Model.ExceptionAssets</strong><em>Repair, lost, or return pending</em></span>
+        <span class="kpi-arrow">›</span>
+    </a>
+    <a class="executive-kpi" asp-page="/Assets/Index" asp-route-Status="Active">
+        <span class="kpi-symbol green">↗</span>
+        <span class="kpi-copy"><small>Assignment utilization</small><strong>@Model.UtilizationPercent%</strong><em>@Model.AssignedAssets assigned · @Model.UnassignedAssets unassigned</em></span>
+        <span class="kpi-arrow">›</span>
+    </a>
+    <a class="executive-kpi @(Model.StockGoalsBelowWarning > 0 ? "needs-attention" : "")" asp-page="/Assets/Stock">
+        <span class="kpi-symbol purple">S</span>
+        <span class="kpi-copy"><small>Ready to assign</small><strong>@Model.AvailableAssets</strong><em>@Model.StockGoalsBelowWarning minimum levels below warning</em></span>
+        <span class="kpi-arrow">›</span>
+    </a>
+    <a class="executive-kpi @(Model.OpenShipments > 0 ? "needs-attention" : "")" asp-page="/Shipments/Index">
+        <span class="kpi-symbol orange">⇩</span>
+        <span class="kpi-copy"><small>Open shipments</small><strong>@Model.OpenShipments</strong><em>Not yet received or closed</em></span>
+        <span class="kpi-arrow">›</span>
+    </a>
+</section>
+
+<section class="panel equipment-inventory-panel report-equipment-panel" aria-labelledby="report-equipment-title">
+    <div class="panel-heading">
+        <div><p class="eyebrow">INVENTORY COMPOSITION</p><h2 id="report-equipment-title">Equipment category report</h2><p>Category totals with custody, availability, and exception detail. Associated monitors and docking stations are included.</p></div>
+        <a asp-page="/Assets/Index" asp-route-View="All" asp-route-Status="">Open full inventory</a>
+    </div>
+    <div class="equipment-inventory-grid">
+    @foreach (var item in Model.EquipmentInventory)
+    {
+        <a class="equipment-inventory-card @(item.Attention > 0 ? "has-attention" : "")"
+           asp-page="/Assets/Index" asp-route-View="All" asp-route-Status="" asp-route-Query="@item.Query">
+            <span class="equipment-icon">@item.Icon</span>
+            <span class="equipment-card-copy"><small>@item.Label</small><strong>@item.Total</strong><span><em>@item.Assigned assigned</em><em>@item.Available available</em></span></span>
+            @if (item.Attention > 0) { <b>@item.Attention exceptions</b> }
+            <span class="kpi-arrow">›</span>
+        </a>
+    }
+    </div>
+</section>
+
+@if (Model.StockGoalsBelowWarning > 0)
+{
+    <section class="dashboard-alert" role="alert">
+        <span class="dashboard-alert-icon">!</span>
+        <div>
+            <span class="alert-label">PURCHASING ATTENTION</span>
+            <h2>@Model.StockGoalsBelowWarning stock @(Model.StockGoalsBelowWarning == 1 ? "goal is" : "goals are") below the warning level</h2>
+            <div class="dashboard-alert-items"><span>Review the shortage and create the required purchase request.</span></div>
+        </div>
+        <a class="button alert-button" asp-page="/Assets/Stock">View stock shortages</a>
+    </section>
+}
+
+<section class="report-dashboard-grid">
+    <article class="panel report-dashboard-card">
+        <div class="panel-heading"><div><p class="eyebrow">LIFECYCLE</p><h2>Inventory by status</h2><p>Where equipment currently sits in its lifecycle.</p></div><a asp-page="/Assets/Index">View inventory</a></div>
+        <div class="dashboard-ring-list">
+            @foreach (var item in Model.ByStatus)
+            {
+                int percent = (int)Math.Round(item.Count * 100m / Math.Max(1, Model.TotalAssets));
+                <a class="dashboard-ring-item" asp-page="/Assets/Index" asp-route-Status="@item.Label"><span class="metric-ring" style="--ring-value:@percent"><strong>@item.Count</strong><small>@percent%</small></span><span><strong>@item.Label</strong><small>of inventory</small></span></a>
+            }
+        </div>
+    </article>
+
+    <article class="panel report-dashboard-card">
+        <div class="panel-heading"><div><p class="eyebrow">LOCATION</p><h2>Inventory by location</h2><p>Where equipment is physically recorded.</p></div></div>
+        <div class="report-side-bars">
+            @foreach (var item in Model.ByLocation)
+            {
+                int percent = (int)Math.Round(item.Count * 100m / Math.Max(1, Model.TotalAssets));
+                int maximum = Math.Max(1, Model.ByLocation.Select(x => x.Count).DefaultIfEmpty(0).Max());
+                <a asp-page="/Assets/Index" asp-route-Query="@item.Label"><span><strong>@item.Label</strong><small>@percent% of inventory</small></span><i><b style="width:@Math.Max(2, item.Count * 100 / maximum)%"></b></i><em>@item.Count</em></a>
+            }
+        </div>
+    </article>
+</section>
+
+<section class="panel report-panel warranty-report">
+    <div class="panel-heading">
+        <div><p class="eyebrow">RISK WATCH</p><h2>Warranty expiration</h2><p>Equipment with warranties expiring during the next 90 days.</p></div>
+        <span class="result-count">@Model.WarrantyExpiring.Count</span>
+    </div>
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead><tr><th>Asset / Hostname</th><th>Equipment name</th><th>Warranty expiration</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var item in Model.WarrantyExpiring)
+            {
+                <tr data-href="@Url.Page("/Assets/Details", new { id = item.Id, ReturnUrl = "/Reports" })" tabindex="0">
+                    <td><a class="asset-link" asp-page="/Assets/Details" asp-route-id="@item.Id" asp-route-ReturnUrl="/Reports">@item.Tag</a></td>
+                    <td>@item.Name</td>
+                    <td>@item.Expiration.ToString("MMM d, yyyy")</td>
+                    <td><a class="row-action" asp-page="/Assets/Details" asp-route-id="@item.Id" asp-route-ReturnUrl="/Reports">›</a></td>
+                </tr>
+            }
+            </tbody>
+        </table>
+        @if (Model.WarrantyExpiring.Count == 0)
+        {
+            <div class="empty-state compact"><p>No warranties expire during the next 90 days.</p></div>
+        }
+    </div>
+</section>

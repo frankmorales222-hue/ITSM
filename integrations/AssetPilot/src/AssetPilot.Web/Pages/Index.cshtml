@@ -1,0 +1,150 @@
+@page
+@model AssetPilot.Web.Pages.IndexModel
+@{
+    ViewData["Title"] = "Dashboard";
+    ViewData["Section"] = "Dashboard";
+}
+<header class="dashboard-hero">
+    <div>
+        <p class="eyebrow">INVENTORY COMMAND CENTER</p>
+        <h1>Asset operations at a glance</h1>
+        <p>Monitor availability, assignments, shipments, and purchasing signals from one place.</p>
+    </div>
+    <div class="dashboard-hero-actions">
+        <a class="button primary" asp-page="/Assets/Create">＋ Add asset</a>
+    </div>
+</header>
+<section class="executive-kpis" aria-label="Inventory summary">
+    <a class="executive-kpi" asp-page="/Assets/Index" asp-route-Status="Active">
+        <span class="kpi-symbol green">↗</span>
+        <span class="kpi-copy"><small>Assignment utilization</small><strong>@Model.UtilizationPercent%</strong><em>@Model.AssignedAssets assigned assets</em></span>
+        <span class="kpi-arrow">›</span>
+    </a>
+    <a class="executive-kpi" asp-page="/Assets/Stock">
+        <span class="kpi-symbol purple">S</span>
+        <span class="kpi-copy"><small>Ready to assign</small><strong>@Model.InStockAssets</strong><em>@Model.HealthyStockTargets of @Model.TotalStockTargets minimum levels healthy</em></span>
+        <span class="kpi-arrow">›</span>
+    </a>
+    <a class="executive-kpi" asp-page="/Shipments/Index">
+        <span class="kpi-symbol blue">S</span>
+        <span class="kpi-copy"><small>Open shipments</small><strong>@Model.OpenShipments</strong><em>@Model.PendingReceiptAssets assets pending receipt</em></span>
+        <span class="kpi-arrow">›</span>
+    </a>
+    <a class="executive-kpi @(Model.AttentionCount > 0 ? "needs-attention" : "")" asp-page="/Reports/Index">
+        <span class="kpi-symbol orange">!</span>
+        <span class="kpi-copy"><small>Operational attention</small><strong>@Model.AttentionCount</strong><em>@Model.OpenShipments open shipments · @Model.StockAlerts.Count stock alerts</em></span>
+        <span class="kpi-arrow">›</span>
+    </a>
+</section>
+<section class="panel equipment-inventory-panel" aria-labelledby="equipment-inventory-title">
+    <div class="panel-heading">
+        <div><p class="eyebrow">ASSET INVENTORY DETAIL</p><h2 id="equipment-inventory-title">Equipment by category</h2><p>See exactly what the organization owns, what is assigned, and what is ready to deploy.</p></div>
+        <a asp-page="/Assets/Index" asp-route-View="All" asp-route-Status="">Open full inventory</a>
+    </div>
+    <div class="equipment-inventory-grid">
+    @foreach (var item in Model.EquipmentInventory)
+    {
+        <a class="equipment-inventory-card @(item.Attention > 0 ? "has-attention" : "")"
+           asp-page="/Assets/Index" asp-route-View="All" asp-route-Status="" asp-route-Query="@item.Query">
+            <span class="equipment-icon">@item.Icon</span>
+            <span class="equipment-card-copy">
+                <small>@item.Label</small>
+                <strong>@item.Total</strong>
+                <span><em>@item.Assigned assigned</em><em>@item.Available available</em></span>
+            </span>
+            @if (item.Attention > 0) { <b>@item.Attention need attention</b> }
+            <span class="kpi-arrow">›</span>
+        </a>
+    }
+    </div>
+</section>
+@if (Model.StockAlerts.Count > 0)
+{
+    <section class="dashboard-alert" role="alert">
+        <div class="dashboard-alert-icon">!</div>
+        <div class="dashboard-alert-copy">
+            <span class="alert-label">PURCHASING ACTION REQUIRED</span>
+            <h2>@Model.StockAlerts.Count minimum stock level@(Model.StockAlerts.Count == 1 ? " is" : "s are") below its warning point</h2>
+            <div class="dashboard-alert-items">
+            @foreach (var alert in Model.StockAlerts.Take(4))
+            {
+                <span><strong>@alert.AssetType</strong> · @alert.Location · @alert.Available available · order @alert.ReorderQuantity</span>
+            }
+            </div>
+        </div>
+        <a class="button alert-button" asp-page="/Assets/Stock">Review and create purchase request</a>
+    </section>
+}
+else
+{
+    <section class="dashboard-health">
+        <span class="health-check">✓</span>
+        <div><strong>Available stock is healthy</strong><small>All configured minimum levels are currently above their warning points.</small></div>
+        <a asp-page="/Assets/Stock">View minimum levels</a>
+    </section>
+}
+<div class="dashboard-insights">
+    <section class="panel dashboard-card">
+        <div class="panel-heading"><div><h2>Inventory lifecycle</h2><p>Distribution across current asset statuses.</p></div><a asp-page="/Assets/Index">Full inventory</a></div>
+        <div class="dashboard-ring-list">
+        @foreach (var row in Model.StatusBreakdown)
+        {
+            <a class="dashboard-ring-item" asp-page="/Assets/Index" asp-route-Status="@row.Label">
+                <span class="metric-ring" style="--ring-value:@row.Percent"><strong>@row.Count</strong><small>@row.Percent%</small></span>
+                <span><strong>@row.Label</strong><small>of total inventory</small></span>
+            </a>
+        }
+        </div>
+        <div class="utilization-summary">
+            <div><span>Assigned</span><strong>@Model.AssignedAssets</strong></div>
+            <div><span>Unassigned</span><strong>@Model.UnassignedAssets</strong></div>
+            <div><span>Employees</span><strong>@Model.ActiveEmployees</strong></div>
+        </div>
+    </section>
+    <section class="panel dashboard-card">
+        <div class="panel-heading"><div><h2>Deployable stock</h2><p>What is available now, not merely marked in stock.</p></div><a asp-page="/Assets/Stock">Manage stock</a></div>
+        <div class="stock-visual">
+            <div class="stock-total-ring" style="--stock-value:@Math.Min(100, Model.InStockAssets)">
+                <strong>@Model.InStockAssets</strong><span>available</span>
+            </div>
+            <div class="stock-ranked-list">
+            @foreach (var row in Model.StockByType)
+            {
+                <div><span><strong>@row.Label</strong><em>@row.Count</em></span><span class="mini-track"><i style="width:@row.Percent%"></i></span></div>
+            }
+            @if (Model.StockByType.Count == 0) { <p class="muted">No assets are currently available.</p> }
+            </div>
+        </div>
+        <div class="dashboard-ring-list location-ring-list">
+        @foreach (var location in Model.StockByLocation)
+        {
+            <a class="dashboard-ring-item" asp-page="/Assets/Stock" asp-route-Location="@location.Label"><span class="metric-ring compact" style="--ring-value:@location.Percent"><strong>@location.Count</strong></span><span><strong>@location.Label</strong><small>available assets</small></span></a>
+        }
+        </div>
+    </section>
+</div>
+<div class="dashboard-lower">
+    <section class="panel recent-activity">
+        <div class="panel-heading"><div><h2>Recently updated assets</h2><p>Latest inventory activity and ownership changes.</p></div><a asp-page="/Assets/Index">View all</a></div>
+        <div class="recent-table">
+        @foreach (var asset in Model.RecentAssets)
+        {
+            <a asp-page="/Assets/Details" asp-route-id="@asset.AssetId" asp-route-ReturnUrl="/">
+                <span class="asset-avatar">A</span>
+                <span><strong>@asset.AssetTag</strong><small>@asset.Name</small></span>
+                <span><strong>@(asset.AssignedTo ?? "Unassigned")</strong><small>Assignment</small></span>
+                <span class="status-chip @asset.Status.ToLowerInvariant().Replace(" ", "-")">@asset.Status</span>
+                <time>@asset.ModifiedUtc.ToLocalTime().ToString("MMM d, h:mm tt")</time>
+                <span class="kpi-arrow">›</span>
+            </a>
+        }
+        </div>
+    </section>
+    <aside class="panel action-center">
+        <div class="panel-heading"><div><h2>Action center</h2><p>Start the most common workflows.</p></div></div>
+        <a asp-page="/Assets/Create"><span class="action-icon">＋</span><span><strong>Add an asset</strong><small>Record and assign new equipment</small></span><em>›</em></a>
+        <a asp-page="/Employees/Create"><span class="action-icon">E</span><span><strong>Add an employee</strong><small>Create a person and assign assets</small></span><em>›</em></a>
+        <a asp-page="/Shipments/Create"><span class="action-icon">S</span><span><strong>Create shipment</strong><small>Prepare an incoming or outgoing shipment</small></span><em>›</em></a>
+        <a asp-page="/Assets/Import"><span class="action-icon">⇩</span><span><strong>Bulk import</strong><small>Use the approved Excel format</small></span><em>›</em></a>
+    </aside>
+</div>

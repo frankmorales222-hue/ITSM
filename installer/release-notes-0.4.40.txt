@@ -1,0 +1,8 @@
+Northstar Desk 0.4.40
+
+- Create Ticket now opens the published IT Support request form.
+- Removed the forced Short summary field from request forms and form testing.
+- Ticket details now display endpoint hostname, CPU usage, and memory usage from the latest inventory snapshot.
+- Replaced the hard-coded password-reset report with configurable subject, status, date, requester, and team filters.
+- Added Reports navigation for standard reports, saved custom reports, and the custom report builder.
+- Added self-service profile editing for name, email address, and phone number.

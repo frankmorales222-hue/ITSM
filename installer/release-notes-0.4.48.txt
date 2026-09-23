@@ -1,0 +1,5 @@
+Northstar Desk 0.4.48
+
+- Fixed the ticket detail assignment selector showing Unassigned when round-robin assigned the ticket to an eligible manager or administrator.
+- Kept the selector's eligible staff roles consistent with the routing engine.
+- Added regression coverage for every assignable staff role.

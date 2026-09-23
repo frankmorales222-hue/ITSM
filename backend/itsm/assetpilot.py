@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import os
+import re
+import secrets
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
+from psycopg import connect as pg_connect
+from psycopg.rows import dict_row
 
-from .models import Asset, AssetHistory, Department, Employee, Location, Organization, User
+from .config import settings
+from .models import Asset, AssetHistory, Department, Employee, Location, Organization, Role, User
+from .security import hash_password
 
 
 ASSET_CORE_COLUMNS = {
@@ -18,8 +24,40 @@ ASSET_CORE_COLUMNS = {
     "PurchaseCostCents", "WarrantyExpiration", "IsArchived", "Remarks",
 }
 
+_ASSET_ACCOUNT_PASSWORD_HASH = hash_password(secrets.token_urlsafe(48))
+
+
+def _available_username(db: Session, email: str) -> str:
+    base = re.sub(r"[^a-z0-9._-]+", ".", email.split("@", 1)[0].lower()).strip("._-") or "user"
+    candidate, suffix = base[:70], 1
+    while db.scalar(select(User.id).where(func.lower(User.username) == candidate.lower())):
+        suffix += 1
+        candidate = f"{base[:max(1, 70-len(str(suffix)))]}.{suffix}"
+    return candidate
+
+
+def ensure_asset_employee_user(db: Session, employee: Employee) -> User | None:
+    """Create the requester's login identity from the authoritative inventory employee."""
+    email = (employee.work_email or "").strip().lower()
+    if not email or email.endswith("@invalid.local") or employee.employment_status.lower() != "active":
+        return None
+    user = db.scalar(select(User).where(func.lower(User.email) == email))
+    if not user:
+        display_name = " ".join(part for part in [employee.preferred_name or employee.first_name, employee.last_name] if part).strip()
+        user = User(username=_available_username(db, email), email=email, display_name=display_name or email,
+                    password_hash=_ASSET_ACCOUNT_PASSWORD_HASH, role=Role.END_USER, active=True,
+                    must_change_password=True, employee_number=employee.employee_number,
+                    job_title=employee.job_title or "", auth_source="AssetPilot",
+                    role_source="Asset Inventory", team_source="Requester account")
+        db.add(user); db.flush()
+    if employee.user_id != user.id:
+        employee.user_id = user.id
+    return user
+
 
 def default_assetpilot_path() -> Path:
+    if settings.assetpilot_database_path:
+        return Path(settings.assetpilot_database_path)
     return Path(os.environ.get("LOCALAPPDATA", "")) / "AssetPilot" / "Data" / "assetpilot.db"
 
 
@@ -31,19 +69,35 @@ def _connect(path: Path) -> sqlite3.Connection:
     return connection
 
 
-def assetpilot_preview(path: Path | None = None) -> dict:
+def _postgres_url() -> str:
+    return settings.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+
+def _read_source(path: Path | None = None) -> dict[str, list]:
+    tables = ("Employees", "Assets", "AssetAssignments", "AssetStatusHistory", "AssetNetworkAddresses")
+    if path is None and settings.database_url.startswith("postgresql"):
+        with pg_connect(_postgres_url(), row_factory=dict_row) as connection:
+            return {
+                table: connection.execute(
+                    f'SELECT * FROM assetpilot."{table}" ORDER BY 1'
+                ).fetchall()
+                for table in tables
+            }
     source = path or default_assetpilot_path()
     connection = _connect(source)
     try:
-        counts = {}
-        for table in ("Assets", "Employees", "AssetAssignments", "AssetStatusHistory", "AssetNetworkAddresses"):
-            try:
-                counts[table] = connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
-            except sqlite3.OperationalError:
-                counts[table] = 0
+        return {
+            table: connection.execute(f'SELECT * FROM "{table}" ORDER BY 1').fetchall()
+            for table in tables
+        }
     finally:
         connection.close()
-    return {"source": str(source), "counts": counts}
+
+
+def assetpilot_preview(path: Path | None = None) -> dict:
+    rows = _read_source(path)
+    source = "PostgreSQL: assetpilot schema" if path is None and settings.database_url.startswith("postgresql") else str(path or default_assetpilot_path())
+    return {"source": source, "counts": {table: len(items) for table, items in rows.items()}}
 
 
 def _text(value) -> str | None:
@@ -87,15 +141,12 @@ def import_assetpilot(db: Session, path: Path | None = None, actor_id: int | Non
             raise RuntimeError("Create an organization before importing AssetPilot")
         db.info["organization_id"] = organization_id
     source_path = path or default_assetpilot_path()
-    connection = _connect(source_path)
-    try:
-        source_employees = connection.execute('SELECT * FROM "Employees" ORDER BY "EmployeeId"').fetchall()
-        source_assets = connection.execute('SELECT * FROM "Assets" ORDER BY "AssetId"').fetchall()
-        source_assignments = connection.execute('SELECT * FROM "AssetAssignments" ORDER BY "AssignedUtc"').fetchall()
-        source_status = connection.execute('SELECT * FROM "AssetStatusHistory" ORDER BY "ChangedUtc"').fetchall()
-        source_addresses = connection.execute('SELECT * FROM "AssetNetworkAddresses" ORDER BY "AssetNetworkAddressId"').fetchall()
-    finally:
-        connection.close()
+    source = _read_source(path)
+    source_employees = source["Employees"]
+    source_assets = source["Assets"]
+    source_assignments = sorted(source["AssetAssignments"], key=lambda row: str(row["AssignedUtc"] or ""))
+    source_status = sorted(source["AssetStatusHistory"], key=lambda row: str(row["ChangedUtc"] or ""))
+    source_addresses = source["AssetNetworkAddresses"]
 
     departments = {item.name.casefold(): item for item in db.scalars(select(Department)).all()}
     locations = {item.name.casefold(): item for item in db.scalars(select(Location)).all()}
@@ -143,8 +194,9 @@ def import_assetpilot(db: Session, path: Path | None = None, actor_id: int | Non
                 if value is not None and (getattr(employee, key) in (None, "") or employee.source == "AssetPilot"):
                     setattr(employee, key, value)
             employee_updated += 1
-        user = users_by_email.get(email.casefold())
-        if user and employee.user_id is None:
+        user = users_by_email.get(email.casefold()) or ensure_asset_employee_user(db, employee)
+        if user:
+            users_by_email[email.casefold()] = user
             employee.user_id = user.id
         employee_source_ids[row["EmployeeId"]] = employee.id
     db.flush()
@@ -230,5 +282,6 @@ def import_assetpilot(db: Session, path: Path | None = None, actor_id: int | Non
                             previous_value={"status": row["FromStatus"]},
                             new_value={"assetpilot_id": key[1], "status": row["ToStatus"], "reason": row["Reason"]}))
         history_created += 1
-    return {"source": str(source_path), "employees_created": employee_created, "employees_updated": employee_updated,
+    source_label = "PostgreSQL: assetpilot schema" if path is None and settings.database_url.startswith("postgresql") else str(source_path)
+    return {"source": source_label, "employees_created": employee_created, "employees_updated": employee_updated,
             "assets_created": asset_created, "assets_updated": asset_updated, "history_created": history_created}

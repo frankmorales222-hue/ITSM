@@ -1,0 +1,3 @@
+Northstar Desk 0.4.67
+
+Asset Inventory now displays the endpoint agent's observed-user email in the Assigned to column whenever there is no formal employee asset assignment. No ticket, routing, agent, or other workflow behavior was changed.

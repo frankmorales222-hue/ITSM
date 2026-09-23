@@ -1,0 +1,5 @@
+Northstar Desk Server 0.4.19
+
+- Uniform light and dark theme styling across the application.
+- Consistent navigation, surfaces, forms, tables, panels, and typography.
+- CSS/theme changes only; application behavior is unchanged.

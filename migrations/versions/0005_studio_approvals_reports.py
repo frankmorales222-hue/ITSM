@@ -11,14 +11,12 @@ depends_on = None
 
 
 def _seed_current_schema(bind):
-    forms = sa.table("form_definitions", sa.column("id", sa.Integer), sa.column("organization_id", sa.Integer),
-                     sa.column("slug", sa.String), sa.column("name", sa.String), sa.column("description", sa.String),
-                     sa.column("category", sa.String), sa.column("icon", sa.String), sa.column("fields", sa.JSON),
-                     sa.column("active", sa.Boolean), sa.column("published", sa.Boolean),
-                     sa.column("created_at", sa.DateTime(timezone=True)), sa.column("updated_at", sa.DateTime(timezone=True)))
-    workflows = sa.table("approval_workflows", sa.column("organization_id", sa.Integer), sa.column("name", sa.String),
-                         sa.column("form_definition_id", sa.Integer), sa.column("steps", sa.JSON), sa.column("active", sa.Boolean),
-                         sa.column("created_at", sa.DateTime(timezone=True)), sa.column("updated_at", sa.DateTime(timezone=True)))
+    # Revision 0001 intentionally creates the model's current schema for a new
+    # installation. Reflect that schema here so this compatibility branch keeps
+    # working as new non-null columns are added to the models in later releases.
+    metadata = sa.MetaData()
+    forms = sa.Table("form_definitions", metadata, autoload_with=bind)
+    workflows = sa.Table("approval_workflows", metadata, autoload_with=bind)
     templates = [
         ("incident-report", "Incident Report", "Report an operational, security, or service incident.", "Incident", "incident", [
             {"id":"incident-type","key":"incident_type","label":"Incident type","type":"select","required":True,"help":"Choose the closest match.","options":["Service disruption","Security","Privacy","Safety","Other"]},
@@ -39,13 +37,18 @@ def _seed_current_schema(bind):
         for slug, name, description, category, icon, fields in templates:
             bind.execute(forms.insert().values(organization_id=organization_id, slug=slug, name=name,
                                                description=description, category=category, icon=icon, fields=fields,
-                                               active=True, published=True, created_at=sa.func.now(), updated_at=sa.func.now()))
+                                               active=True, is_template=False, published=True,
+                                               form_type="service_request", portal_visible=True,
+                                               default_for_type=False, requester_layout=[], technician_layout=[],
+                                               lifecycle_state="published", version=1,
+                                               created_at=sa.func.now(), updated_at=sa.func.now()))
         change_id = bind.scalar(sa.select(forms.c.id).where(forms.c.organization_id == organization_id,
                                                             forms.c.slug == "change-management"))
         bind.execute(workflows.insert().values(organization_id=organization_id, name="Change approval",
                                                form_definition_id=change_id,
                                                steps=[{"name":"Manager approval","approver_role":"manager","approver_user_id":None}],
-                                               active=True, created_at=sa.func.now(), updated_at=sa.func.now()))
+                                               task_template_ids=[], closure_requirements={}, active=True,
+                                               created_at=sa.func.now(), updated_at=sa.func.now()))
 
 
 def upgrade():

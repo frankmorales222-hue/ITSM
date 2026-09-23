@@ -1,0 +1,4 @@
+Northstar Desk Server 0.4.18
+
+- Added Appearance to the active Administration console.
+- Light, Dark, and Modern themes are available under Settings > Appearance.

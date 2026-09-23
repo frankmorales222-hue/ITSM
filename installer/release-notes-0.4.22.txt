@@ -1,0 +1,4 @@
+Northstar Desk Server 0.4.22
+
+- Endpoint agent launcher retries a self-signed internal HTTPS download using curl's one-time insecure transport fallback.
+- Original Northstar palette and Administration scroll correction retained.

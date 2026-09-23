@@ -1,0 +1,104 @@
+@page
+@model AssetPilot.Web.Pages.Shipments.DetailsModel
+@{
+    ViewData["Title"] = "Shipment Details";
+    ViewData["Section"] = "Shipments";
+}
+<div class="page-heading">
+    <div><p class="eyebrow">SHIPMENTS</p><h1>@Model.Shipment.ShipmentNumber</h1><p class="muted">@Model.Shipment.Direction shipment · @Model.Shipment.Carrier</p></div>
+    <span class="status-chip @Model.Shipment.Status.ToLowerInvariant().Replace(" ", "-")">@Model.Shipment.Status</span>
+</div>
+<section class="form-section danger-zone">
+    <h2>Delete shipment</h2>
+    <p class="muted">Remove this shipment from the active shipment list. Its audit record will be retained.</p>
+    <form method="post"
+          asp-page-handler="Delete"
+          asp-route-id="@Model.Shipment.ShipmentId"
+          onsubmit="return confirm('Delete shipment @Model.Shipment.ShipmentNumber? This removes it from the shipment list.');">
+        <button class="button danger-outline" type="submit">Delete shipment</button>
+    </form>
+</section>
+<div class="detail-grid">
+    <section class="info-card">
+        <div class="card-title"><h2>Tracking</h2><span>⌖</span></div>
+        <dl>
+            <dt>Carrier</dt><dd>@(Model.Shipment.Carrier ?? "—")</dd>
+            <dt>Tracking number</dt><dd>@(Model.Shipment.TrackingNumber ?? "—")</dd>
+            <dt>Expected</dt><dd>@(Model.Shipment.ExpectedDate?.ToString() ?? "—")</dd>
+            <dt>Last checked</dt><dd>@(Model.Shipment.TrackingLastCheckedUtc?.ToLocalTime().ToString("g") ?? "Never")</dd>
+            <dt>Latest update</dt><dd>@(Model.Shipment.TrackingLastMessage ?? "—")</dd>
+        </dl>
+        @if (!string.IsNullOrWhiteSpace(Model.Shipment.TrackingUrl))
+        {
+            <p><a href="@Model.Shipment.TrackingUrl" target="_blank" rel="noopener">Open carrier tracking ↗</a></p>
+        }
+        <form method="post" asp-page-handler="UpdateShipping" asp-route-id="@Model.Shipment.ShipmentId">
+            <button class="button primary full" type="submit">Update shipping</button>
+        </form>
+        @if (!string.IsNullOrWhiteSpace(Model.Shipment.TrackingNumber)
+            || Model.Shipment.TrackingEvents.Count > 0)
+        {
+            <form method="post"
+                  asp-page-handler="ClearTracking"
+                  asp-route-id="@Model.Shipment.ShipmentId"
+                  onsubmit="return confirm('Remove the tracking number, updates, and carrier history from this shipment?');">
+                <button class="button danger-outline full" type="submit">Delete tracking information</button>
+            </form>
+        }
+    </section>
+    <section class="info-card">
+        <div class="card-title"><h2>Route</h2><span>⇢</span></div>
+        <dl>
+            <dt>Sender</dt><dd>@(Model.Shipment.Sender ?? "—")</dd>
+            <dt>Recipient</dt><dd>@(Model.Shipment.Recipient ?? "—")</dd>
+            <dt>Origin</dt><dd>@(Model.Shipment.Origin ?? "—")</dd>
+            <dt>Destination</dt><dd>@(Model.Shipment.Destination ?? "—")</dd>
+            <dt>Ship date</dt><dd>@(Model.Shipment.ShipDate?.ToString() ?? "—")</dd>
+        </dl>
+    </section>
+    <section class="info-card">
+        <div class="card-title"><h2>Assets</h2><span>▣</span></div>
+        <ul class="audit-list">
+        @foreach (var item in Model.Shipment.Items)
+        {
+            <li><a asp-page="/Assets/Details" asp-route-id="@item.AssetId">@item.Asset.AssetTag</a><small>@item.Asset.Name</small></li>
+        }
+        </ul>
+    </section>
+    <section class="info-card timeline-card">
+        <div class="card-title"><h2>Carrier history</h2><span>◷</span></div>
+        @if (Model.Shipment.TrackingEvents.Count == 0)
+        {
+            <p class="muted">No carrier events have been retrieved yet.</p>
+        }
+        else
+        {
+            <ol class="timeline">
+            @foreach (var item in Model.Shipment.TrackingEvents.OrderByDescending(x => x.EventUtc))
+            {
+                <li><strong>@item.Status</strong><small>@item.Description</small><small>@item.Location</small><time>@item.EventUtc.ToLocalTime().ToString("g")</time></li>
+            }
+            </ol>
+        }
+    </section>
+</div>
+@if (!Model.Shipment.ReceivedUtc.HasValue && Model.Shipment.Status != "Cancelled")
+{
+    <div class="report-grid report-panel">
+        <section class="form-section">
+            <h2>Confirm receipt</h2>
+            <form method="post" asp-page-handler="Receive" asp-route-id="@Model.Shipment.ShipmentId" class="form-stack">
+                <label>Condition<select asp-for="ReceiptCondition"><option>Good</option><option>Fair</option><option>Poor</option><option>Damaged</option></select></label>
+                <label>Notes<input asp-for="ReceiptNotes" /></label>
+                <button class="button primary" type="submit">Confirm receipt</button>
+            </form>
+        </section>
+        <section class="form-section">
+            <h2>Cancel shipment</h2>
+            <p class="muted">Return included assets to their prior available status.</p>
+            <form method="post" asp-page-handler="Cancel" asp-route-id="@Model.Shipment.ShipmentId">
+                <button class="button danger-outline" type="submit">Cancel shipment</button>
+            </form>
+        </section>
+    </div>
+}

@@ -1,0 +1,5 @@
+Northstar Desk 0.4.56
+
+- Adds a direct ticket reassignment control in Accountability for IT staff.
+- Technicians and administrators can select a destination queue, then an eligible technician from that queue.
+- Records every reassignment in ticket history and the audit log, and notifies the new technician.

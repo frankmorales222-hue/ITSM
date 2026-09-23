@@ -34,3 +34,11 @@ def clear_integration_secret(db: Session, provider: str, name: str) -> None:
 def integration_secret_status(db: Session, provider: str) -> dict[str, bool]:
     names = db.scalars(select(IntegrationSecret.name).where(IntegrationSecret.provider == provider)).all()
     return {name: True for name in names}
+
+
+def get_integration_secret(db: Session, provider: str, name: str) -> str | None:
+    record = db.scalar(select(IntegrationSecret).where(
+        IntegrationSecret.provider == provider, IntegrationSecret.name == name))
+    if not record:
+        return None
+    return _cipher().decrypt(record.encrypted_value.encode()).decode()

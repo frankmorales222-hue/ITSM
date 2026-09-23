@@ -1,0 +1,33 @@
+@page
+@model AssetPilot.Web.Pages.Employees.CreateModel
+@{
+    ViewData["Title"] = "Add Employee";
+    ViewData["Section"] = "Employees";
+}
+<div class="page-heading">
+    <div><p class="eyebrow">EMPLOYEES</p><h1>Add employee</h1><p class="muted">Create the employee, then optionally continue directly to an assigned asset.</p></div>
+</div>
+<form method="post" class="editor-layout">
+    <div class="editor-main">
+        <div asp-validation-summary="ModelOnly" class="validation"></div>
+        <section class="form-section">
+            <div class="section-title"><span class="section-icon">♙</span><div><h2>Employee information</h2><p>Identity, organization, and contact details.</p></div></div>
+            <div class="form-grid">
+                <label><span>Employee ID</span><input asp-for="Input.EmployeeNumber" /><span asp-validation-for="Input.EmployeeNumber" class="validation"></span></label>
+                <label><span>Full name</span><input asp-for="Input.DisplayName" /><span asp-validation-for="Input.DisplayName" class="validation"></span></label>
+                <label><span>Email</span><input asp-for="Input.Email" /><span asp-validation-for="Input.Email" class="validation"></span></label>
+                <label><span>Department</span><input asp-for="Input.Department" /></label>
+                <label><span>Manager</span><input asp-for="Input.Manager" /></label>
+                <label><span>Location</span><input asp-for="Input.Location" /></label>
+                <label><span>Phone</span><input asp-for="Input.Phone" /></label>
+            </div>
+        </section>
+    </div>
+    <aside class="action-panel">
+        <p class="eyebrow">ACTIONS</p>
+        <button class="button primary full" type="submit" name="AddAssetNext" value="true">Save employee and add asset</button>
+        <button class="button secondary full" type="submit" name="AddAssetNext" value="false">Save employee only</button>
+        <a class="button ghost full" asp-page="Index">Cancel</a>
+        <p class="action-note">The recommended action opens the asset form with this employee already selected.</p>
+    </aside>
+</form>

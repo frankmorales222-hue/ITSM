@@ -1,0 +1,1 @@
+Appearance-only release: the Request timeline now scrolls with the full ticket page instead of using a fixed-height inner scrollbar. This update replaces compiled browser assets only; it does not alter the database, tickets, routing, email, HTTPS certificates, Caddy configuration, ports, endpoint agent, or server application executable.

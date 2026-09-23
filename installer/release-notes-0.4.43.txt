@@ -1,0 +1,4 @@
+Northstar Desk 0.4.43
+
+- Endpoint Agent 0.1.14 now starts the tray companion from the Windows common Startup folder for every interactive user session.
+- Live chat remains in the ticket and continues to persist messages and invitations securely.

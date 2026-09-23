@@ -1,0 +1,7 @@
+Northstar Desk 0.4.61
+
+- Adds an administrator-only HTTPS Certificate page in Help Desk Settings.
+- Supports certificate/full-chain plus private-key files or a PFX package.
+- Verifies the certificate hostname, expiration date, and key match before applying it.
+- Validates the HTTPS configuration before change, preserves a backup, and restarts only the HTTPS proxy.
+- Certificate passwords and private keys are never stored in the database or returned to the browser.

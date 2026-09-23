@@ -1,0 +1,41 @@
+@page "{id:int}"
+@model AssetPilot.Web.Pages.Assets.DuplicateEditModel
+@{
+    ViewData["Title"] = "Review Duplicate";
+    ViewData["Section"] = "Assets";
+}
+<div class="page-heading">
+    <div>
+        <a class="back-link" asp-page="Duplicates">← Duplicate review</a>
+        <p class="eyebrow">ROW @Model.Review.SourceRowNumber</p>
+        <h1>Review duplicate import</h1>
+        <p class="muted">@Model.Review.MatchReason</p>
+    </div>
+</div>
+<form method="post" class="editor-layout">
+    <div class="editor-main">
+        <div asp-validation-summary="ModelOnly" class="validation"></div>
+        <section class="form-section">
+            <div class="section-title"><div><h2>Identifying fields</h2><p>Correct a typo and retry, or update the matching asset.</p></div></div>
+            <div class="form-grid">
+                @for (int index = 0; index < Model.Headers.Count; index++)
+                {
+                    <label class="@(index is 2 or 3 ? "key-field" : "")">
+                        @Model.Headers[index]
+                        <input asp-for="Values[index]" />
+                    </label>
+                }
+            </div>
+        </section>
+        <section class="form-section">
+            <label>Resolution notes<textarea asp-for="ResolutionNotes" rows="3"></textarea></label>
+        </section>
+    </div>
+    <aside class="action-panel">
+        <p class="eyebrow">RESOLVE</p>
+        <button class="button primary full" type="submit" asp-page-handler="Retry" asp-route-id="@Model.Review.AssetImportReviewId">Save and retry as new</button>
+        <button class="button secondary full" type="submit" asp-page-handler="UpdateExisting" asp-route-id="@Model.Review.AssetImportReviewId" onclick="return confirm('Update the matching asset with these values?');">Update matching asset</button>
+        <a class="button ghost full" asp-page="Duplicates">Cancel</a>
+        <div class="action-note">Asset Tag / Hostname and Serial number control duplicate matching.</div>
+    </aside>
+</form>

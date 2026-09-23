@@ -1,0 +1,7 @@
+Northstar Desk 0.4.62
+
+- Endpoint-agent notifications now include unread ticket updates, assistance requests, live-chat requests, and active announcements.
+- Windows alerts use information, warning, and critical visual severity.
+- The tray tooltip now identifies the app as Help Desk and explains that right-click opens its options.
+- Endpoint heartbeat delivery is refreshed every 60 seconds.
+- Endpoint Agent 0.1.20 adds signed automatic update checks and download integrity verification for future agent releases.

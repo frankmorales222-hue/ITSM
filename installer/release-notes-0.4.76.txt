@@ -1,0 +1,8 @@
+Northstar Desk 0.4.76
+
+Remote agent update delivery.
+
+- Administrators can publish a newer Northstar Endpoint Agent installer from Assets > Endpoint agents.
+- Connected remote agents automatically check for the published installer, verify its SHA-256 digest, and install only a newer version.
+
+This release does not change HTTPS certificates, Caddy, ports, database data, tickets, routing, email, authentication, or existing endpoint inventory.

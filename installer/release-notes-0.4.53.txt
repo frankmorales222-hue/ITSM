@@ -1,0 +1,4 @@
+Northstar Desk 0.4.53
+
+- Fixes the live-chat send screen by keeping auto-scroll inside the conversation panel.
+- Includes Northstar Endpoint Agent 0.1.17 with a dedicated Help Desk tray icon and hover text.

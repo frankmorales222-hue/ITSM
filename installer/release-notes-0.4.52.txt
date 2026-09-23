@@ -1,0 +1,3 @@
+Northstar Desk 0.4.52
+
+- Fixes browser navigation state so pages and live-chat screens render immediately without a manual refresh.

@@ -1,0 +1,4 @@
+Northstar Desk 0.4.58
+
+- Corrects the ticket-detail lifecycle error that continued to cause a blank page in 0.4.57.
+- Preserves the direct queue and technician reassignment feature.

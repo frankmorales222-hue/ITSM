@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 *.db
+*.db-shm
+*.db-wal
 .env
 frontend/node_modules/
 frontend/dist/
@@ -17,3 +19,72 @@ data/backups/*.sqlite
 data/backups/*.sqlite.sha256
 data/backups/*.dump
 data/backups/*.dump.sha256
+*.update-private.pem
+installer/signing/private/
+installer/artifacts/*.nsupdate
+installer/artifacts/*.nsupdate.sha256
+
+# Local runtime data and credentials
+data/
+certificates/
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+*.sqlite
+*.sqlite.sha256
+
+# Generated release and handoff artifacts
+artifacts/
+deliverables/
+handoff/
+recovery/
+installer/artifacts/
+installer/build/
+installer/dist/
+installer/vendor/
+docs/word/
+
+# Endpoint-agent build output
+endpoint_agent/artifacts/
+endpoint_agent/build/
+endpoint_agent/dist/
+endpoint_agent/data/
+endpoint_agent/*.egg-info/
+endpoint_agent/.pyi-runtime-test/
+
+# .NET and integration build output
+**/bin/
+**/obj/
+**/.tools/
+platform_setup/
+integrations/AssetPilot/src/AssetPilot.Web/App_Data/
+integrations/AssetPilot/tests/_scratch/
+integrations/AssetPilot/src/AssetPilot.Web/SeedData/Asset inventory US.xlsx
+*.br
+*.gz
+
+# Local test, scratch, and diagnostic output
+.scratch/
+.pytest-*/
+.pytest_agent_tmp/
+.test-*/
+cert-test-temp/
+pytest-chat-*/
+tests/_scratch/
+tests/_scratch-standalone/
+tests/_pytest_*/
+tests/_runtime_independence/
+endpoint_agent/.agent-toast-test-temp-*/
+endpoint_agent/.test-tmp/
+endpoint_agent/pytest-cache-files-*/
+endpoint_agent/tests/_scratch/
+endpoint_agent/tests/_toast_e2e_tmp/
+_agent_e2e_tmp/
+_sigstatus.txt
+_timeline_search.png
+agent-*-log.txt
+agent-*-diagnostic.txt
+agent-*-result.txt

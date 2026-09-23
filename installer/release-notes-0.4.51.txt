@@ -1,0 +1,4 @@
+Northstar Desk 0.4.51
+
+- Includes Northstar Endpoint Agent 0.1.16.
+- The agent now uses the Help Desk tray icon and displays “Help Desk” when hovered.

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>AssetPilot.Application</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <RootNamespace>AssetPilot.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AssetPilot.Domain\AssetPilot.Domain.csproj" />
+  </ItemGroup>
+</Project>

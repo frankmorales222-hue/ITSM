@@ -1,0 +1,4 @@
+Northstar Desk 0.4.44
+
+- Endpoint Agent 0.1.15 adds a Northstar star icon to the Windows notification area.
+- The tray startup behavior and live-chat workflow are unchanged.

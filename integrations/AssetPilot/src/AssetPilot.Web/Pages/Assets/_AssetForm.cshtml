@@ -1,0 +1,80 @@
+@model AssetPilot.Web.Pages.Assets.AssetInput
+<div class="form-tab-system" data-tab-root>
+<nav class="app-tabs" aria-label="Asset form sections">
+    <button type="button" class="active" data-tab-target="identification">1. Identification</button>
+    <button type="button" data-tab-target="assignment">2. Assignment &amp; location</button>
+    <button type="button" data-tab-target="equipment">3. Monitors &amp; peripherals</button>
+    <button type="button" data-tab-target="ownership">4. Ownership &amp; audit</button>
+</nav>
+<section class="form-section tabbed-form-section" data-tab-panel="identification">
+    <div class="section-title"><span class="section-icon">▣</span><div><h2>Identification</h2><p>Primary identifiers and inventory classification.</p></div></div>
+    <div class="form-grid">
+        <label><span>Assigned to</span><input asp-for="AssignedTo" /><span asp-validation-for="AssignedTo" class="validation"></span></label>
+        <label><span>Asset tag / hostname</span><input asp-for="AssetTag" /><span asp-validation-for="AssetTag" class="validation"></span></label>
+        <label><span>Hostname</span><input asp-for="Hostname" /></label>
+        <label><span>Serial number</span><input asp-for="SerialNumber" /><span asp-validation-for="SerialNumber" class="validation"></span></label>
+        <label><span>Duplicate serial number</span><input asp-for="DuplicateSerialNumber" /></label>
+        <label><span>Display name</span><input asp-for="Name" /><span asp-validation-for="Name" class="validation"></span></label>
+        <label><span>Asset type</span><input asp-for="AssetType" /></label>
+        <label><span>Category</span><input asp-for="Category" /></label>
+        <label><span>Manufacturer</span><input asp-for="Manufacturer" /></label>
+        <label><span>Model</span><input asp-for="Model" /></label>
+        <label><span>MAC address</span><input asp-for="MacAddress" /></label>
+        <label><span>Status</span><select asp-for="Status"><option>Active</option><option>In Stock</option><option>Pending Receipt</option><option>Repair</option><option>Retired</option></select></label>
+        <label><span>Condition</span><select asp-for="Condition"><option>Good</option><option>Fair</option><option>Poor</option><option>Damaged</option><option>Unknown</option></select></label>
+        <label><span>New / replacement status</span><input asp-for="NewReplacementStatus" /></label>
+    </div>
+</section>
+<section class="form-section tabbed-form-section" data-tab-panel="assignment" hidden>
+    <div class="section-title"><span class="section-icon">▤</span><div><h2>Assignment and location</h2><p>Employee, department, custody, and allocation fields.</p></div></div>
+    <div class="form-grid">
+        <label><span>Employee ID</span><input asp-for="EmployeeNumber" /></label>
+        <label><span>Assigned-to email</span><input asp-for="AssignedToEmail" /></label>
+        <label><span>Department</span><input asp-for="Department" /></label>
+        <label><span>Designation</span><input asp-for="Designation" /></label>
+        <label><span>In office / WFH-OOO</span><input asp-for="OfficeWorkMode" /></label>
+        <label><span>Workstation</span><input asp-for="Workstation" /></label>
+        <label><span>Location</span><input asp-for="Location" /></label>
+        <label><span>Current location</span><input asp-for="CurrentLocation" /></label>
+        <label><span>Date of allocation</span><input asp-for="AllocationDate" /></label>
+        <label><span>Service request ticket</span><input asp-for="ServiceRequestTicket" /></label>
+        <label><span>Signed allocation form status</span><input asp-for="SignedAllocationFormStatus" /></label>
+        <label><span>Date received</span><input asp-for="ReceivedDate" /></label>
+        <label><span>Old employee ID</span><input asp-for="OldEmployeeNumber" /></label>
+        <label><span>Old user name</span><input asp-for="OldUserName" /></label>
+    </div>
+</section>
+<section class="form-section tabbed-form-section" data-tab-panel="equipment" hidden>
+    <div class="section-title"><span class="section-icon">▥</span><div><h2>Monitors and peripherals</h2><p>Equipment issued with the primary asset.</p></div></div>
+    <div class="form-grid">
+        <label><span>Monitor 1 asset tag / hostname</span><input asp-for="Monitor1AssetTag" /></label>
+        <label><span>Monitor 1 serial number</span><input asp-for="Monitor1SerialNumber" /></label>
+        <label><span>Monitor 2 asset tag / hostname</span><input asp-for="Monitor2AssetTag" /></label>
+        <label><span>Monitor 2 serial number</span><input asp-for="Monitor2SerialNumber" /></label>
+        <label><span>Monitor 3 asset tag / hostname</span><input asp-for="Monitor3AssetTag" /></label>
+        <label><span>Monitor 3 serial number</span><input asp-for="Monitor3SerialNumber" /></label>
+        <label><span>Docking station</span><input asp-for="DockingStation" placeholder="Asset tag, serial, or description" /></label>
+        <label><span>Keyboard</span><input asp-for="Keyboard" placeholder="Asset tag, serial, or description" /></label>
+        <label><span>Mouse</span><input asp-for="Mouse" placeholder="Asset tag, serial, or description" /></label>
+        <label><span>Headset</span><input asp-for="Headset" placeholder="Asset tag, serial, or description" /></label>
+        <label><span>Printer</span><input asp-for="Printer" placeholder="Asset tag, serial, or description" /></label>
+    </div>
+</section>
+<section class="form-section tabbed-form-section" data-tab-panel="ownership" hidden>
+    <div class="section-title"><span class="section-icon">◇</span><div><h2>Ownership and audit details</h2><p>Complete remaining fields from the audit workbook.</p></div></div>
+    <div class="form-grid">
+        <label><span>Company name</span><input asp-for="Company" /></label>
+        <label><span>Vendor</span><input asp-for="Vendor" /></label>
+        <label><span>Owner / HOD name</span><input asp-for="OwnerName" /></label>
+        <label><span>Owner email</span><input asp-for="OwnerEmail" /></label>
+        <label><span>Purpose</span><input asp-for="Purpose" /></label>
+        <label><span>Classification</span><input asp-for="Classification" /></label>
+        <label><span>Severity / identification</span><input asp-for="Severity" /></label>
+        <label><span>Project</span><input asp-for="Project" /></label>
+        <label><span>Purchase date</span><input asp-for="PurchaseDate" /></label>
+        <label><span>Purchase cost</span><input asp-for="PurchaseCost" /></label>
+        <label><span>Warranty expiration</span><input asp-for="WarrantyExpiration" /></label>
+        <label class="full-row"><span>Remarks</span><textarea asp-for="Remarks" rows="4"></textarea></label>
+    </div>
+</section>
+</div>

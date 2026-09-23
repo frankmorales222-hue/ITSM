@@ -1,0 +1,58 @@
+@page
+@model AssetPilot.Web.Pages.Assets.DuplicatesModel
+@{
+    ViewData["Title"] = "Import Issues";
+    ViewData["Section"] = "Assets";
+}
+<div class="page-heading">
+    <div>
+        <a class="back-link" asp-page="Index">← Asset inventory</a>
+        <p class="eyebrow">IMPORT CONTROL</p>
+        <h1>Import Issues</h1>
+        <p class="muted">Resolve possible duplicates and rejected rows before adding them to inventory.</p>
+    </div>
+    <div class="page-actions">
+        <span class="status-chip pending-receipt">@Model.PendingCount pending</span>
+        <a class="button primary" asp-page="Import">Import assets</a>
+    </div>
+</div>
+<section class="panel">
+    <form method="get" class="filter-bar">
+        <select asp-for="Status">
+            <option value="Pending">Pending</option>
+            <option value="Imported">Imported</option>
+            <option value="Updated">Updated</option>
+            <option value="Dismissed">Dismissed</option>
+            <option value="">All decisions</option>
+        </select>
+        <button class="button secondary" type="submit">Show</button>
+    </form>
+    <div class="table-wrap">
+        <table class="data-table">
+            <thead><tr><th>Source</th><th>Asset / Hostname</th><th>Serial</th><th>Assigned to</th><th>Why flagged</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+            @foreach (var row in Model.Reviews)
+            {
+                <tr>
+                    <td><strong>@row.Source</strong><small>Row @row.RowNumber · @row.CreatedUtc.ToLocalTime().ToString("g")</small></td>
+                    <td><strong>@row.AssetTag</strong>@if (row.MatchingAssetId.HasValue) { <small>Matches <a asp-page="Details" asp-route-id="@row.MatchingAssetId">@row.MatchingAssetTag</a></small> }</td>
+                    <td>@(string.IsNullOrWhiteSpace(row.Serial) ? "—" : row.Serial)</td>
+                    <td>@(string.IsNullOrWhiteSpace(row.AssignedTo) ? "—" : row.AssignedTo)</td>
+                    <td>@row.Reason</td>
+                    <td><span class="status-chip">@row.Status</span></td>
+                    <td>
+                        @if (row.Status == "Pending")
+                        {
+                            <a class="button secondary" asp-page="DuplicateEdit" asp-route-id="@row.Id">Review</a>
+                            <form method="post" asp-page-handler="Dismiss" asp-route-id="@row.Id" class="inline-form" onsubmit="return confirm('Dismiss this duplicate row?');">
+                                <button class="button danger-outline" type="submit">Dismiss</button>
+                            </form>
+                        }
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+        @if (Model.Reviews.Count == 0) { <div class="empty-state compact"><p>No duplicate rows in this view.</p></div> }
+    </div>
+</section>

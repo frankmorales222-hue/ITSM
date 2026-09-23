@@ -1,0 +1,53 @@
+/* Form Studio guidance, publishing state, option editing, and action layout. */
+.vs-toolbar{height:auto;min-height:72px;gap:10px;padding-block:9px}
+.vs-actions{flex-wrap:wrap;justify-content:flex-end;row-gap:6px!important}
+.vs-element-library button .vs-help-dot{width:15px;height:15px;border:1px solid #cbd4e1;border-radius:50%;display:grid;place-items:center;background:#f7f9fc;color:#65758a;font-size:.48rem;line-height:1}
+.vs-publish-status{margin-top:15px;padding:11px 12px;border-radius:8px;border:1px solid #dbe3ee;background:#f7f9fc}
+.vs-publish-status b,.vs-publish-status small{display:block}
+.vs-publish-status b{font-size:.64rem;color:#546276}
+.vs-publish-status small{margin-top:4px;font-size:.53rem;line-height:1.4;color:#7d8998}
+.vs-publish-status.live{border-color:#b9dfcb;background:#effaf4}
+.vs-publish-status.live b{color:#176545}
+.vs-custom-template-heading{padding-top:12px;margin-top:10px;border-top:1px solid #e4e9ef}
+.vs-option-editor{margin:13px 0;padding:11px;border:1px solid #dfe5ed;border-radius:8px;background:#f8faff}
+.vs-option-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.vs-option-title>span{font-size:.6rem;font-weight:800;color:#58677a}
+.vs-option-title button{border:1px solid #b9cbef;background:#fff;color:#285fdc;border-radius:6px;padding:6px 8px;font-size:.54rem;font-weight:800}
+.vs-option-row{display:grid;grid-template-columns:18px minmax(0,1fr) 26px;align-items:center;gap:6px;margin-bottom:6px}
+.vs-option-row>span{width:18px;height:18px;display:grid;place-items:center;border-radius:50%;background:#e8eef9;color:#62728a;font-size:.48rem;font-weight:800}
+.vs-option-row input{min-width:0}
+.vs-option-row>button{height:27px;border:1px solid #e4c9c9;border-radius:6px;background:#fff;color:#a23b3b;font-weight:900}
+.vs-option-row>button:disabled{opacity:.35;cursor:not-allowed}
+.vs-option-editor>small{display:block;color:#8793a2;font-size:.51rem;line-height:1.35;margin-top:7px}
+.vs-form-list{max-height:255px}
+.vs-form-list>button.test-form{background:#f3f7ff;border:1px solid #cad8f6}
+.vs-form-list>button.test-form.active{background:#e9f0ff;border-color:#7398ef}
+.vs-form-list strong em{display:inline-block;margin-left:6px;padding:2px 5px;border-radius:4px;background:#dce8ff;color:#245fdc;font-size:.42rem;font-style:normal;letter-spacing:.08em;vertical-align:1px}
+.vs-preview-field.testing{cursor:default}
+.vs-live-control,.vs-system-summary input{width:100%;min-height:36px;border:1px solid #cbd7e7;border-radius:6px;background:#fff;padding:9px 10px;color:#24364e;font:inherit;font-size:.6rem;outline:none}
+.vs-live-control:focus,.vs-system-summary input:focus{border-color:#3972ee;box-shadow:0 0 0 3px #3972ee1f}
+textarea.vs-live-control{resize:vertical;line-height:1.45}
+select.vs-live-control[multiple]{min-height:92px;padding:5px}
+.vs-choice-preview.interactive button{border:1px solid #dbe2ed;border-radius:6px;padding:8px 5px;text-align:center;font-size:.49rem;color:#56667b;min-height:51px;background:#fff}
+.vs-choice-preview.interactive button:hover{border-color:#7398ef;background:#f6f9ff}
+.vs-choice-preview.interactive button.selected{border-color:#3c71ef;background:#f1f5ff;box-shadow:inset 0 0 0 1px #3c71ef}
+.vs-radio-preview.interactive label{display:flex;align-items:center;gap:5px;margin:0;font-weight:500;cursor:pointer}
+.vs-radio-preview.interactive input,.vs-checkbox-preview.interactive input{width:auto;margin:0}
+.vs-checkbox-preview.interactive{display:flex;align-items:center;gap:6px;cursor:pointer}
+.vs-test-result{margin:0 17px 14px;padding:11px 13px;border-radius:7px;font-size:.61rem;font-weight:700}
+.vs-test-result.success{border:1px solid #9fd2b8;background:#edf9f2;color:#176545}
+.vs-test-result.error{border:1px solid #efb7b7;background:#fff3f3;color:#9d2c35}
+
+/* A compact element list is faster to scan than a tile palette. */
+.vs-element-library section>div{display:flex;flex-direction:column;gap:4px}
+.vs-element-library button{width:100%;min-height:42px;display:grid;grid-template-columns:28px minmax(0,1fr) 18px;align-items:center;gap:7px;padding:6px 8px}
+.vs-element-library button i{width:27px;height:27px;display:grid;place-items:center;border-radius:6px;background:#eef3ff;font-size:.72rem}
+.vs-element-library button span{font-size:.6rem}
+.vs-element-library button b{position:static!important;justify-self:end}
+.vs-live-text{position:relative}.vs-live-text>small,.catalog-text-limit>small{display:block;text-align:right;margin-top:3px;color:#78879a;font-size:.5rem}
+.catalog-text-limit{width:100%}
+
+@container(max-width:880px){.vs-toolbar{flex-wrap:wrap}.vs-actions{margin-left:auto}}
+@container(max-width:680px){.vs-actions .vs-secondary{display:block}.vs-actions{width:100%;justify-content:flex-start}}
+@media(max-width:650px){.vs-actions .vs-secondary{display:block}.vs-actions{width:100%;justify-content:flex-start}}
+.vs-role-tools{display:flex;align-items:center;gap:8px;padding:10px 16px;background:#fff;border:1px solid #dbe3df;border-radius:12px;margin:0 0 10px}.vs-role-tools button{border:1px solid #cbd7d1;background:#f5f8f6;border-radius:8px;padding:7px 11px}.vs-role-tools button.active{background:#174c43;color:#fff;border-color:#174c43}.vs-role-tools small{margin-left:auto;color:#64756f}.vs-form-admin-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.vs-form-admin-actions button,.vs-version-list button{border:1px solid #cbd7d1;background:#fff;border-radius:8px;padding:8px}.vs-form-admin-actions .danger{color:#9b2c2c;border-color:#efcaca}.vs-version-list{display:grid;gap:8px;border-top:1px solid #dbe3df;padding-top:12px}.vs-version-list article{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px;background:#f5f8f6;border-radius:8px}.vs-version-list span{display:grid}.vs-version-list small{color:#64756f}@media(max-width:900px){.vs-role-tools{flex-wrap:wrap}.vs-role-tools small{width:100%;margin-left:0}}

@@ -40,6 +40,8 @@ def evaluate() -> tuple[list[str], list[str]]:
         errors.append("ITSM_TRUSTED_HOSTS must contain the production DNS name and no wildcard")
     if public.hostname and public.hostname not in settings.hosts:
         errors.append("The ITSM_PUBLIC_URL hostname must be present in ITSM_TRUSTED_HOSTS")
+    if settings.bind_host in {"0.0.0.0", "::"}:
+        errors.append("ITSM_BIND_HOST must not expose Uvicorn directly; bind it to the reverse-proxy interface")
     if not Path("frontend/dist/index.html").is_file():
         errors.append("The frontend build is missing; run scripts\\build.cmd")
 

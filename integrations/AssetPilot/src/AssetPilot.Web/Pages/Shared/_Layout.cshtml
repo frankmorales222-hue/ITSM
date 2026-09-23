@@ -1,0 +1,193 @@
+﻿@using AssetPilot.Infrastructure.Identity
+@using AssetPilot.Infrastructure.Persistence
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@inject UserManager<ApplicationUser> UserManager
+@inject IAuthorizationService AuthorizationService
+@inject AssetPilotDbContext Db
+@{
+    bool canManageSecurity = (await AuthorizationService.AuthorizeAsync(User, "Security.ManagePermissions")).Succeeded;
+    bool canViewMasterData = (await AuthorizationService.AuthorizeAsync(User, "MasterData.View")).Succeeded;
+    bool canViewBackups = (await AuthorizationService.AuthorizeAsync(User, "Operations.ViewJobs")).Succeeded;
+    bool canViewEmployees = (await AuthorizationService.AuthorizeAsync(User, "Employees.View")).Succeeded;
+    bool canViewShipments = (await AuthorizationService.AuthorizeAsync(User, "Shipments.View")).Succeeded;
+    bool canViewReports = (await AuthorizationService.AuthorizeAsync(User, "Reports.View")).Succeeded;
+    ApplicationUser? currentUser = User.Identity?.IsAuthenticated == true ? await UserManager.GetUserAsync(User) : null;
+    string path = Context.Request.Path.Value ?? "/";
+    string returnUrl = Context.Request.Query["ReturnUrl"].ToString();
+    bool dashboardActive = path == "/";
+    bool stockActive = path.StartsWith("/Assets/Stock", StringComparison.OrdinalIgnoreCase)
+        || (path.StartsWith("/Assets/Details", StringComparison.OrdinalIgnoreCase)
+            && returnUrl.Contains("/Assets/Stock", StringComparison.OrdinalIgnoreCase));
+    bool addAssetActive = path.StartsWith("/Assets/Create", StringComparison.OrdinalIgnoreCase);
+    bool importActive = path.StartsWith("/Assets/Import", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("/Assets/Duplicate", StringComparison.OrdinalIgnoreCase);
+    bool reportsActive = path.StartsWith("/Reports", StringComparison.OrdinalIgnoreCase)
+        || (path.StartsWith("/Assets/Details", StringComparison.OrdinalIgnoreCase)
+            && returnUrl.Contains("/Reports", StringComparison.OrdinalIgnoreCase));
+    bool inventoryActive = !stockActive && !addAssetActive && !importActive && !reportsActive
+        && path.StartsWith("/Assets", StringComparison.OrdinalIgnoreCase);
+    bool shipmentsActive = path.StartsWith("/Shipments", StringComparison.OrdinalIgnoreCase);
+    bool employeesActive = path.StartsWith("/Employees", StringComparison.OrdinalIgnoreCase);
+    bool masterDataActive = path.StartsWith("/Administration/MasterData", StringComparison.OrdinalIgnoreCase);
+    bool securityActive = path.StartsWith("/Security", StringComparison.OrdinalIgnoreCase);
+    bool backupsActive = path.StartsWith("/System/Backups", StringComparison.OrdinalIgnoreCase);
+    bool settingsActive = path.StartsWith("/System/Settings", StringComparison.OrdinalIgnoreCase);
+    var branding = await Db.SystemSettings.AsNoTracking()
+        .Where(x => x.SettingKey == "Application.Name"
+            || x.SettingKey == "Branding.LogoDataUrl"
+            || x.SettingKey == "Branding.AccentColor")
+        .ToDictionaryAsync(x => x.SettingKey, x => x.Value);
+    string appName = branding.GetValueOrDefault("Application.Name", "AssetPilot");
+    string logo = branding.GetValueOrDefault("Branding.LogoDataUrl", "");
+    string configuredAccent = branding.GetValueOrDefault("Branding.AccentColor", "#0969da");
+    string accent = System.Text.RegularExpressions.Regex.IsMatch(configuredAccent, "^#[0-9a-fA-F]{6}$")
+        ? configuredAccent
+        : "#0969da";
+    IList<string> currentRoles = currentUser is null ? [] : await UserManager.GetRolesAsync(currentUser);
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] - @appName</title>
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body style="--accent:@accent">
+<div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+        <a class="brand" asp-page="/Index" aria-label="@appName dashboard">
+            @if (!string.IsNullOrWhiteSpace(logo))
+            {
+                <img class="brand-logo" src="@logo" alt="" />
+            }
+            else
+            {
+                <span class="brand-mark" aria-hidden="true">&#9670;</span>
+            }
+            <span class="brand-copy"><strong>@appName</strong><small>Asset Intelligence</small></span>
+        </a>
+        <nav>
+            <a class="@(dashboardActive ? "active" : "")" asp-page="/Index"><span class="nav-icon" aria-hidden="true">&#9635;</span><span>Dashboard</span></a>
+            <div class="nav-section">Assets</div>
+            <a class="@(inventoryActive ? "active" : "")" asp-page="/Assets/Index"><span class="nav-icon" aria-hidden="true">&#9648;</span><span>Asset Inventory</span></a>
+            <a class="@(stockActive ? "active" : "")" asp-page="/Assets/Stock"><span class="nav-icon" aria-hidden="true">&#9638;</span><span>Available Stock</span></a>
+            <a class="@(addAssetActive ? "active" : "")" asp-page="/Assets/Create"><span class="nav-icon" aria-hidden="true">+</span><span>Add Asset</span></a>
+            <a class="@(importActive ? "active" : "")" asp-page="/Assets/Import"><span class="nav-icon" aria-hidden="true">&#8681;</span><span>Bulk Import</span></a>
+            @if (canViewShipments)
+            {
+                <div class="nav-section">Operations</div>
+                <a class="@(shipmentsActive ? "active" : "")" asp-page="/Shipments/Index"><span class="nav-icon" aria-hidden="true">&#9633;</span><span>Shipments</span></a>
+            }
+            @if (canViewReports)
+            {
+                <a class="@(reportsActive ? "active" : "")" asp-page="/Reports/Index"><span class="nav-icon" aria-hidden="true">&#8645;</span><span>Reports</span></a>
+            }
+            <div class="nav-section">Administration</div>
+            @if (canViewEmployees)
+            {
+                <a class="@(employeesActive ? "active" : "")" asp-page="/Employees/Index"><span class="nav-icon" aria-hidden="true">&#9817;</span><span>Employees</span></a>
+            }
+            @if (canViewMasterData)
+            {
+                <a class="@(masterDataActive ? "active" : "")" asp-page="/Administration/MasterData/Index"><span class="nav-icon" aria-hidden="true">&#9642;</span><span>Master Data</span></a>
+            }
+            @if (canManageSecurity)
+            {
+                <a class="@(securityActive ? "active" : "")" asp-page="/Security/Index"><span class="nav-icon" aria-hidden="true">&#9671;</span><span>Security</span></a>
+            }
+            @if (canViewBackups)
+            {
+                <div class="nav-section">System</div>
+                <a class="@(backupsActive ? "active" : "")" asp-page="/System/Backups/Index"><span class="nav-icon" aria-hidden="true">&#9711;</span><span>Backups</span></a>
+                <a class="@(settingsActive ? "active" : "")" asp-page="/System/Settings/Index"><span class="nav-icon" aria-hidden="true">&#9881;</span><span>Application Settings</span></a>
+            }
+        </nav>
+        <div class="sidebar-meta"><span>Operations workspace</span><small>AssetPilot 3.6.0</small></div>
+    </aside>
+    <div class="main">
+        <header class="topbar">
+            <button class="mobile-nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false">&#9776;</button>
+            <form method="get" asp-page="/Search" class="global-search" role="search">
+                <span class="search-icon" aria-hidden="true">&#9906;</span>
+                <label class="sr-only" for="global-search-input">Search across AssetPilot</label>
+                <input id="global-search-input" type="search" name="Q" value="@(path == "/Search" ? Context.Request.Query["Q"] : "")" placeholder="Search assets, employees, shipments, locations..." autocomplete="off" />
+                <button class="search-submit" type="submit" aria-label="Run global search">&#8629;</button>
+                <kbd title="Keyboard shortcut: press Ctrl+K to focus global search">Ctrl K</kbd>
+            </form>
+            <div class="topbar-spacer"></div>
+            <div class="user-area">
+                <div><strong>@(currentUser?.DisplayName ?? User.Identity?.Name)</strong><small>@string.Join(", ", currentRoles)</small></div>
+                <span class="user-avatar">@((currentUser?.DisplayName ?? "A")[0].ToString().ToUpperInvariant())</span>
+            </div>
+            <form method="post" asp-page="/Account/Logout"><button class="signout" type="submit" title="Sign out" aria-label="Sign out">&#8618;</button></form>
+        </header>
+        <main class="content">
+            @if (TempData["Success"] is string success) { <div class="toast success" role="status">@success</div> }
+            @if (TempData["Warning"] is string warning) { <div class="toast warning" role="alert">@warning</div> }
+            @if (TempData["Error"] is string error) { <div class="toast error" role="alert">@error</div> }
+            @RenderBody()
+        </main>
+        <footer><span><strong>@appName</strong> &middot; @DateTime.Now.Year</span><span>Secure asset intelligence &middot; 3.6.0</span></footer>
+    </div>
+</div>
+<div class="nav-scrim" data-close-navigation></div>
+@await RenderSectionAsync("Scripts", required: false)
+<script>
+const globalSearch = document.getElementById("global-search-input");
+function activateAppTab(root, name) {
+  const tab = [...root.querySelectorAll("[data-tab-target]")].find(x => x.dataset.tabTarget === name);
+  if (!tab) return;
+  root.querySelectorAll("[data-tab-target]").forEach(x => x.classList.toggle("active", x === tab));
+  root.querySelectorAll("[data-tab-panel]").forEach(x => x.hidden = x.dataset.tabPanel !== name);
+}
+document.querySelectorAll("[data-tab-root]").forEach((root, index) => {
+  const key = `assetpilot-tab:${location.pathname}:${index}`;
+  const saved = sessionStorage.getItem(key);
+  if (saved) activateAppTab(root, saved);
+});
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    globalSearch?.focus();
+    globalSearch?.select();
+  }
+});
+document.addEventListener("click", e => {
+  const interactive = e.target.closest("a,button,input,select,textarea,label,form");
+  const row = e.target.closest("[data-row-link][data-href]");
+  if (row && !interactive) window.location.href = row.dataset.href;
+  const tab = e.target.closest("[data-tab-target]");
+  if (tab) {
+    const root = tab.closest("[data-tab-root]");
+    activateAppTab(root, tab.dataset.tabTarget);
+    const roots = [...document.querySelectorAll("[data-tab-root]")];
+    sessionStorage.setItem(`assetpilot-tab:${location.pathname}:${roots.indexOf(root)}`, tab.dataset.tabTarget);
+  }
+  const opener = e.target.closest("[data-open-dialog]");
+  if (opener) document.getElementById(opener.dataset.openDialog)?.showModal();
+  const closer = e.target.closest("[data-close-dialog]");
+  if (closer) closer.closest("dialog")?.close();
+  const navToggle = e.target.closest(".mobile-nav-toggle");
+  if (navToggle) {
+    const open = document.body.classList.toggle("nav-open");
+    navToggle.setAttribute("aria-expanded", String(open));
+  }
+  if (e.target.closest("[data-close-navigation]") || e.target.closest(".sidebar nav a")) {
+    document.body.classList.remove("nav-open");
+    document.querySelector(".mobile-nav-toggle")?.setAttribute("aria-expanded", "false");
+  }
+});
+document.addEventListener("keydown", e => {
+  const row = e.target.closest("[data-row-link][data-href]");
+  if (row && (e.key === "Enter" || e.key === " ")) {
+    e.preventDefault(); window.location.href = row.dataset.href;
+  }
+  if (e.key === "Escape") document.body.classList.remove("nav-open");
+});
+</script>
+</body>
+</html>
+

@@ -1,0 +1,3 @@
+Northstar Desk 0.4.68
+
+Appearance only update. Settings now provides Clean Enterprise, Modern Workspace, and Premium Dark, plus Northstar Original as an immediate revert choice. Each palette applies consistently to navigation, workspace, forms, cards, and settings without changing ticket, agent, routing, asset, HTTPS, or other application behavior.

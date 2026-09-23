@@ -1,0 +1,5 @@
+Northstar Desk 0.4.55
+
+- Added Automation Center with independent, disabled-by-default controls for duplicate detection, escalation, after-hours alerts, technician follow-up, maintenance, knowledge suggestions, expiry tracking, surveys, chat archive, password-expiry readiness, and announcement delivery.
+- Added administrator announcement management for portal notices.
+- Added safe, auditable policy tests that do not alter tickets, accounts, devices, or messages.

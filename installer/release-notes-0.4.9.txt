@@ -1,0 +1,9 @@
+Northstar Desk 0.4.9
+
+- Adds secure ticket-based live chat between requesters and assigned technicians.
+- Saves live-chat conversations in the ticket timeline and audit history.
+- Alerts assigned technicians when a requester asks for live help.
+- Adds Microsoft Teams support-session creation for assigned technicians.
+- Processes requester closure approval from ticket and email replies with an audit note.
+- Prevents duplicate technician email notifications when a requester closes a ticket.
+- Adds authorization, idempotency, rate limiting, and tenant-scoped persistence tests.

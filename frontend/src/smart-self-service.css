@@ -1,0 +1,180 @@
+.smart-service-settings {
+  padding: 22px 24px;
+  border-bottom: 1px solid #e1e7e4;
+  background: #fbfcfb;
+}
+
+.smart-service-master,
+.smart-knowledge-header,
+.smart-knowledge-list > article,
+.smart-service-actions,
+.self-service-suggestion header,
+.self-service-suggestion footer,
+.self-service-suggestion footer > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.smart-service-master {
+  padding-bottom: 20px;
+}
+
+.smart-service-master p,
+.smart-knowledge-header p,
+.smart-knowledge-list p {
+  margin: 4px 0 0;
+  color: #66756f;
+}
+
+.console-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.console-form-grid label.wide {
+  grid-column: 1 / -1;
+}
+
+.console-form-grid label,
+.console-form-grid label > span,
+.console-form-grid label > small {
+  display: block;
+}
+
+.console-form-grid label > span {
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+.console-form-grid label > small {
+  margin-top: 6px;
+  color: #74817c;
+}
+
+.console-form-grid input,
+.console-form-grid select,
+.console-form-grid textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.smart-service-actions {
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.smart-knowledge-header {
+  padding: 22px 24px;
+  border-bottom: 1px solid #e1e7e4;
+}
+
+.smart-knowledge-header h3,
+.smart-knowledge-header p {
+  margin-bottom: 0;
+}
+
+.smart-knowledge-list > article {
+  align-items: flex-start;
+  padding: 18px 24px;
+  border-bottom: 1px solid #e6ebe8;
+}
+
+.smart-knowledge-list > article > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.smart-article-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.self-service-suggestion {
+  margin-bottom: 20px;
+  padding: 22px;
+  border: 1px solid #b9d8cc;
+  border-left: 5px solid #247b65;
+  border-radius: 14px;
+  background: #f2faf6;
+  color: #172621;
+}
+
+.self-service-suggestion h3,
+.self-service-suggestion p {
+  margin-top: 0;
+}
+
+.self-service-suggestion ol {
+  margin: 16px 0;
+  padding-left: 24px;
+}
+
+.self-service-suggestion li + li {
+  margin-top: 8px;
+}
+
+.self-service-suggestion > small {
+  color: #66756f;
+}
+
+.self-service-suggestion footer {
+  align-items: flex-start;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #cfe1da;
+}
+
+.self-service-suggestion footer > div {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.self-service-outcome {
+  margin-top: 18px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #dcefe6;
+  font-weight: 700;
+}
+
+[data-theme="dark"] .smart-service-settings,
+[data-theme="dark"] .self-service-suggestion {
+  background: #142b37;
+  color: #f4f7f8;
+}
+
+[data-theme="dark"] .smart-service-master p,
+[data-theme="dark"] .smart-knowledge-header p,
+[data-theme="dark"] .smart-knowledge-list p,
+[data-theme="dark"] .self-service-suggestion > small {
+  color: #b5c4ca;
+}
+
+[data-theme="dark"] .self-service-outcome {
+  background: #214b42;
+}
+
+@media (max-width: 820px) {
+  .console-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .smart-service-master,
+  .smart-knowledge-header,
+  .smart-knowledge-list > article,
+  .self-service-suggestion header,
+  .self-service-suggestion footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .self-service-suggestion footer > div {
+    justify-content: flex-start;
+  }
+}

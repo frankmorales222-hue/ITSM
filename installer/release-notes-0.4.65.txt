@@ -1,0 +1,5 @@
+Northstar Desk 0.4.65
+
+- Fixes the HTTPS certificate installer so it verifies the certificate actually served by the live HTTPS listener before reporting success.
+- Rejects incomplete, duplicated, or incorrectly ordered PEM certificate chains before changing the active HTTPS configuration.
+- Reliably stops the previous Northstar HTTPS listener before starting the configured certificate, preventing an older internal certificate from remaining active.

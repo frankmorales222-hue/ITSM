@@ -1,0 +1,57 @@
+@page
+@model AssetPilot.Web.Pages.Assets.ImportModel
+@{
+    ViewData["Title"] = "Import Assets";
+    ViewData["Section"] = "Assets";
+}
+<div class="page-heading">
+    <div>
+        <a class="back-link" asp-page="Index">← Asset inventory</a>
+        <p class="eyebrow">BULK IMPORT</p>
+        <h1>Import assets</h1>
+        <p class="muted">Use the approved 36-column Excel template. Possible duplicates are held safely for review.</p>
+    </div>
+    <div class="page-actions">
+        <a class="button secondary" asp-page-handler="Template">Download Excel template</a>
+        <a class="button secondary" asp-page="Duplicates">Review import issues</a>
+    </div>
+</div>
+@if (Model.Result is not null)
+{
+    <section class="import-summary" aria-live="polite">
+        <div><strong>@Model.Result.Created</strong><span>Created</span></div>
+        <div><strong>@Model.Result.Updated</strong><span>Updated</span></div>
+        <div><strong>@Model.Result.Skipped</strong><span>Duplicate matches</span></div>
+        <div><strong>@Model.Result.Rejected</strong><span>Rejected</span></div>
+    </section>
+    @foreach (string message in Model.Result.Messages)
+    {
+        <div class="toast @(Model.Result.Rejected > 0 ? "warning" : "success")">@message</div>
+    }
+}
+<form method="post" enctype="multipart/form-data" class="editor-layout">
+    <div class="editor-main">
+        <section class="form-section">
+            <div class="section-title"><div><h2>Choose inventory workbook</h2><p>Accepted format: the Asset inventory US.xlsx template, up to 20 MB.</p></div></div>
+            <label class="upload-zone">
+                <span>Select an Excel workbook</span>
+                <small>All 36 headers must remain unchanged and in the original order.</small>
+                <input asp-for="Upload" type="file" accept=".xlsx,.csv" />
+            </label>
+            <span asp-validation-for="Upload" class="validation"></span>
+        </section>
+        <section class="form-section">
+            <div class="section-title"><div><h2>Duplicate handling</h2><p>Matching is case-insensitive by asset tag/hostname or valid serial number.</p></div></div>
+            <label class="import-option">
+                <input asp-for="UpdateExisting" />
+                <span><strong>Overwrite existing values with workbook values</strong><small>Blank fields are always filled safely. Turn this on only when workbook values should replace information already stored in AssetPilot.</small></span>
+            </label>
+        </section>
+    </div>
+    <aside class="action-panel">
+        <p class="eyebrow">ACTIONS</p>
+        <button class="button primary full" type="submit">Import assets</button>
+        <a class="button ghost full" asp-page="Index">Cancel</a>
+        <div class="action-note">Repeated imports do not create duplicate assets. Blank fields are filled automatically; unresolved matching rows appear in Duplicate Review.</div>
+    </aside>
+</form>

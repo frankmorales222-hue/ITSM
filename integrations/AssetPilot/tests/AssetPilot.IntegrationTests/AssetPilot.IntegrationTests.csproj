@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../src/AssetPilot.Web/AssetPilot.Web.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../../src/AssetPilot.Web/SeedData/Asset inventory US.xlsx"
+             Link="SeedData/Asset inventory US.xlsx"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../src/AssetPilot.Web/SeedData/Asset inventory US template.xlsx"
+             Link="SeedData/Asset inventory US template.xlsx"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,90 @@
+@page
+@model AssetPilot.Web.Pages.Assets.IndexModel
+@{
+    ViewData["Title"] = "Asset Inventory";
+    ViewData["Section"] = "Assets";
+    string inventoryReturnUrl = Url.Page("Index", new { Model.Query, Model.Status, Model.View }) ?? "/Assets";
+}
+<div class="page-heading">
+    <div>
+        <p class="eyebrow">ASSETS</p>
+        <h1>Asset Inventory</h1>
+        <p class="muted">One summarized inventory row per user email address.</p>
+    </div>
+    <div class="page-actions">
+        <a class="button secondary"
+           asp-page-handler="Export"
+           asp-route-Query="@Model.Query"
+           asp-route-Status="@Model.Status"
+           asp-route-View="@Model.View">Export current results</a>
+        <a class="button primary" asp-page="Create">Add asset</a>
+    </div>
+</div>
+<section class="panel">
+    <form method="get" class="filter-bar">
+        <label class="search-field">
+            <span>⌕</span>
+            <input asp-for="Query" placeholder="Search any asset field using partial text" />
+        </label>
+        <select asp-for="Status" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            @foreach (string status in AssetPilot.Web.Pages.Assets.IndexModel.Statuses)
+            {
+                <option value="@status">@status</option>
+            }
+        </select>
+        <select asp-for="View" aria-label="Choose equipment view">
+            <option value="Computers">Computers only (default)</option>
+            <option value="All">All equipment</option>
+        </select>
+        <button class="button secondary" type="submit">Apply filters</button>
+        <a class="button ghost" asp-page="Index">Clear filters</a>
+    </form>
+    <div class="inventory-group-list inventory-summary-list">
+        <div class="inventory-group-header" aria-hidden="true">
+            <span>Email</span>
+            <span>Asset / Host</span>
+            <span>Type</span>
+            <span>Location</span>
+            <span>Total Assigned Computers</span>
+            <span>Total Assigned Monitors</span>
+            <span>Status</span>
+        </div>
+        @foreach (var group in Model.Groups)
+        {
+            string? rowHref = group.Assets.Count == 1
+                ? Url.Page("Details", new { id = group.Assets[0].AssetId, ReturnUrl = inventoryReturnUrl })
+                : null;
+            <div class="inventory-group-row"
+                 data-row-link="@(rowHref is null ? null : "true")"
+                 data-href="@rowHref"
+                 tabindex="@(rowHref is null ? null : "0")"
+                 role="@(rowHref is null ? null : "link")"
+                 aria-label="@(rowHref is null ? null : $"Open {group.Assets[0].AssetTag}")">
+                <span class="inventory-email" data-label="Email">
+                    <strong>@(group.Email ?? "No email recorded")</strong>
+                    <small>@group.DisplayName</small>
+                </span>
+                <span class="inventory-host-links" data-label="Asset / Host">
+                    @foreach (var asset in group.Assets)
+                    {
+                        <a class="asset-link"
+                           asp-page="Details"
+                           asp-route-id="@asset.AssetId"
+                           asp-route-ReturnUrl="@inventoryReturnUrl">@(asset.Hostname ?? asset.AssetTag)</a>
+                    }
+                    <small>@(group.Assets.Count == 1 ? group.Assets[0].AssetTag : $"{group.Assets.Count} clickable hostnames")</small>
+                </span>
+                <span data-label="Type">@group.TypeSummary</span>
+                <span data-label="Location">@group.LocationSummary</span>
+                <span class="inventory-count" data-label="Total assets">@group.Assets.Count</span>
+                <span class="inventory-count" data-label="Total monitors">@group.MonitorCount</span>
+                <span data-label="Status"><span class="status-chip @group.StatusClass">@group.StatusSummary</span></span>
+            </div>
+        }
+        @if (Model.Groups.Count == 0)
+        {
+            <div class="empty-state compact"><p>No assets match the current filters.</p></div>
+        }
+    </div>
+</section>

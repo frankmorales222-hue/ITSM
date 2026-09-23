@@ -1,0 +1,292 @@
+@page
+@model AssetPilot.Web.Pages.Assets.StockModel
+@{
+    ViewData["Title"] = "Available Stock";
+    ViewData["Section"] = "Assets";
+    string stockReturnUrl = Url.Page("Stock", new { Model.Query, Model.AssetType, Model.Location, Model.Condition }) ?? "/Assets/Stock";
+}
+
+<div class="dashboard-hero stock-page-hero">
+    <div>
+        <a class="back-link" asp-page="Index">← Asset inventory</a>
+        <p class="eyebrow">AVAILABLE STOCK</p>
+        <h1>Available Stock</h1>
+        <p>See equipment that can be assigned now and set the minimum stock your team needs.</p>
+    </div>
+    <div class="dashboard-hero-actions">
+        <a class="button secondary" asp-page-handler="Export" asp-route-Query="@Model.Query" asp-route-AssetType="@Model.AssetType" asp-route-Location="@Model.Location" asp-route-Condition="@Model.Condition">Export available stock</a>
+        <a class="button primary" asp-page="Create" asp-route-stock="true">Add inventory item</a>
+    </div>
+</div>
+
+<section class="panel inventory-status-panel" aria-labelledby="inventory-status-title">
+    <div class="panel-heading">
+        <div>
+            <p class="eyebrow">INVENTORY OVERVIEW</p>
+            <h2 id="inventory-status-title">Inventory by equipment type and status</h2>
+            <p>Classification comes from the Workstation column in the inventory workbook.</p>
+        </div>
+        <strong class="inventory-total">@Model.InventoryTotals.GrandTotal total</strong>
+    </div>
+    <div class="table-wrap no-horizontal-scroll">
+        <table class="data-table responsive-table stock-status-matrix">
+            <thead>
+                <tr>
+                    <th>Equipment type</th>
+                    <th>Assigned</th>
+                    <th>In Stock</th>
+                    <th>Lost</th>
+                    <th>Under Repair</th>
+                    <th>Retired</th>
+                    <th>Return Pending</th>
+                    <th>Total</th>
+                </tr>
+            </thead>
+            <tbody>
+            @foreach (var row in Model.InventoryMatrix)
+            {
+                <tr>
+                    <td data-label="Equipment type"><strong>@row.AssetType</strong></td>
+                    <td data-label="Assigned">@row.Allocated</td>
+                    <td data-label="In Stock" class="stock-positive">@row.InStock</td>
+                    <td data-label="Lost" class="@(row.Lost > 0 ? "stock-exception" : "")">@row.Lost</td>
+                    <td data-label="Under Repair" class="@(row.UnderRepair > 0 ? "stock-warning" : "")">@row.UnderRepair</td>
+                    <td data-label="Retired">@row.Retired</td>
+                    <td data-label="Return Pending" class="@(row.RecoveryPending > 0 ? "stock-warning" : "")">@row.RecoveryPending</td>
+                    <td data-label="Total"><strong>@row.GrandTotal</strong></td>
+                </tr>
+            }
+                <tr class="matrix-total-row">
+                    <td data-label="Equipment type"><strong>Total</strong></td>
+                    <td data-label="Assigned">@Model.InventoryTotals.Allocated</td>
+                    <td data-label="In Stock">@Model.InventoryTotals.InStock</td>
+                    <td data-label="Lost">@Model.InventoryTotals.Lost</td>
+                    <td data-label="Under Repair">@Model.InventoryTotals.UnderRepair</td>
+                    <td data-label="Retired">@Model.InventoryTotals.Retired</td>
+                    <td data-label="Return Pending">@Model.InventoryTotals.RecoveryPending</td>
+                    <td data-label="Total"><strong>@Model.InventoryTotals.GrandTotal</strong></td>
+                </tr>
+            </tbody>
+        </table>
+        @if (Model.InventoryMatrix.Count == 0)
+        {
+            <div class="empty-state compact"><p>No inventory matches the current filters.</p></div>
+        }
+    </div>
+</section>
+
+<section class="executive-kpis stock-kpis" aria-label="Available stock summary">
+    <a class="executive-kpi" href="#available-assets">
+        <span class="kpi-symbol blue">S</span>
+        <span class="kpi-copy"><small>Ready to assign</small><strong>@Model.TotalInStock</strong><em>Available with the current filters</em></span>
+        <span class="kpi-arrow">›</span>
+    </a>
+    @foreach (var row in Model.ByType.Take(3))
+    {
+        <a class="executive-kpi" asp-route-AssetType="@row.Label">
+            <span class="kpi-symbol purple">@row.Label.Substring(0, 1).ToUpperInvariant()</span>
+            <span class="kpi-copy"><small>@row.Label available</small><strong>@row.Count</strong><em>Ready for assignment</em></span>
+            <span class="kpi-arrow">›</span>
+        </a>
+    }
+</section>
+
+@if (Model.Alerts.Count > 0)
+{
+    <section class="stock-alert-banner" role="alert">
+        <div class="alert-symbol">!</div>
+        <div>
+            <p class="alert-label">PURCHASING ATTENTION REQUIRED</p>
+            <h2>@Model.Alerts.Count minimum stock @(Model.Alerts.Count == 1 ? "level is" : "levels are") below its warning point</h2>
+            @foreach (var alert in Model.Alerts)
+            {
+                <p>
+                    <strong>@alert.AssetType — @alert.Location:</strong>
+                    @alert.Available of @alert.TargetQuantity available
+                    (@alert.AvailablePercent%). The warning level is @alert.ThresholdPercent%.
+                    Create a purchase request for <strong>@alert.ReorderQuantity</strong>.
+                </p>
+            }
+        </div>
+        <a class="button alert-button" href="#stock-level-goals">Review minimum levels</a>
+    </section>
+}
+else if (Model.Targets.Count == 0)
+{
+    <section class="stock-setup-callout">
+        <span>i</span>
+        <div>
+            <strong>Set your first minimum stock level</strong>
+            <small>Example: Keep 50 laptops available and warn at 50%. The page turns red below 25.</small>
+        </div>
+        <a class="button secondary" href="#stock-level-goals">Set minimum level</a>
+    </section>
+}
+else
+{
+    <section class="dashboard-health">
+        <span class="health-check">✓</span>
+        <div><strong>Available stock is above every warning level</strong><small>All configured minimum levels are currently healthy.</small></div>
+        <a href="#stock-level-goals">Review minimum levels</a>
+    </section>
+}
+
+<section class="panel stock-goal-panel" id="stock-level-goals">
+    <div class="panel-heading">
+        <div>
+            <p class="eyebrow">STOCK PLANNING</p>
+            <h2>Minimum stock levels</h2>
+            <p>Set how many units should be ready to assign and when AssetPilot should warn you.</p>
+        </div>
+    </div>
+
+    @if (Model.Targets.Count > 0)
+    {
+        <div class="stock-goal-grid">
+            @foreach (var target in Model.Targets)
+            {
+                int barPercent = Math.Min(100, target.AvailablePercent);
+                <article class="stock-goal-card @(target.IsBelowThreshold ? "below" : "healthy")">
+                    <div class="stock-goal-heading">
+                        <div><strong>@target.AssetType</strong><small>@target.Location</small></div>
+                        <span class="status-chip @(target.IsBelowThreshold ? "alert" : "active")">@(target.IsBelowThreshold ? "Below warning level" : "Healthy")</span>
+                    </div>
+                    <div class="stock-goal-number">
+                        <strong>@target.Available</strong>
+                        <span>of @target.TargetQuantity available</span>
+                        <em>@target.AvailablePercent%</em>
+                    </div>
+                    <div class="stock-goal-track" role="progressbar" aria-valuenow="@target.Available" aria-valuemin="0" aria-valuemax="@target.TargetQuantity">
+                        <i style="width:@barPercent%"></i>
+                        <b style="left:@target.ThresholdPercent%" title="Warning level: @target.ThresholdPercent%"></b>
+                    </div>
+                    <div class="stock-goal-details">
+                        <span><small>Desired quantity</small><strong>@target.TargetQuantity</strong></span>
+                        <span><small>Warn below</small><strong>@target.AlertAt units (@target.ThresholdPercent%)</strong></span>
+                        <span><small>Units needed</small><strong>@target.ReorderQuantity</strong></span>
+                    </div>
+                    @if (Model.CanManageTargets)
+                    {
+                        <div class="stock-goal-actions">
+                            <button class="button secondary small" type="button" data-edit-target data-id="@target.Id" data-type="@target.AssetType" data-location="@target.Location" data-quantity="@target.TargetQuantity" data-percent="@target.ThresholdPercent">Edit level</button>
+                            <form method="post" asp-page-handler="DeleteTarget" asp-route-id="@target.Id" class="inline-form" onsubmit="return confirm('Delete this minimum stock level?');">
+                                <button class="button ghost small" type="submit">Delete</button>
+                            </form>
+                        </div>
+                    }
+                </article>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="empty-state compact"><p>No minimum stock levels have been configured yet.</p></div>
+    }
+
+    @if (Model.CanManageTargets)
+    {
+        <form method="post" asp-page-handler="SaveTarget" class="stock-goal-editor" id="stock-target-form">
+            <input asp-for="TargetId" type="hidden" />
+            <div class="stock-goal-form-heading">
+                <h3 id="stock-form-title">Set a minimum stock level</h3>
+                <p>For 50 desired laptops and a 50% warning level, the page turns red below 25 available laptops.</p>
+            </div>
+            <div class="stock-goal-fields">
+            <label>
+                <span>Equipment type</span>
+                <input asp-for="TargetAssetType" list="stock-asset-types" placeholder="Example: Laptop" />
+                <small>Use the same type shown in Asset Inventory.</small>
+            </label>
+            <datalist id="stock-asset-types">@foreach (string value in Model.AssetTypes) { <option value="@value"></option> }</datalist>
+            <label>
+                <span>Location scope</span>
+                <input asp-for="TargetLocation" list="stock-locations" placeholder="All locations" />
+                <small>Choose All locations for a company-wide goal.</small>
+            </label>
+            <datalist id="stock-locations"><option value="All locations"></option>@foreach (string value in Model.Locations) { <option value="@value"></option> }</datalist>
+            <label>
+                <span>Desired quantity</span>
+                <input asp-for="TargetQuantity" type="number" min="1" placeholder="50" />
+                <small>How many should be ready to assign?</small>
+            </label>
+            <label>
+                <span>Warn me below (%)</span>
+                <input asp-for="ThresholdPercent" type="number" min="1" max="100" />
+                <small>50 means warn below half of the goal.</small>
+            </label>
+            </div>
+            <div class="stock-goal-form-actions">
+                <button class="button primary" type="submit">Save minimum level</button>
+                <button class="button ghost" type="reset" data-clear-target>Clear form</button>
+            </div>
+        </form>
+    }
+</section>
+
+<section class="panel available-stock-panel" id="available-assets">
+    <div class="panel-heading">
+        <div><h2>Equipment ready to assign</h2><p>Only unassigned assets with the status “In Stock” appear here.</p></div>
+        <span class="result-count">@Model.TotalInStock</span>
+    </div>
+    <form method="get" class="filter-bar">
+        <label class="search-field"><span>⌕</span><input asp-for="Query" placeholder="Search tag, hostname, serial, model, or location" /></label>
+        <select asp-for="AssetType" aria-label="Equipment type"><option value="">All equipment types</option>@foreach (string value in Model.AssetTypes) { <option value="@value">@value</option> }</select>
+        <select asp-for="Location" aria-label="Location"><option value="">All locations</option>@foreach (string value in Model.Locations) { <option value="@value">@value</option> }</select>
+        <select asp-for="Condition" aria-label="Condition"><option value="">All conditions</option>@foreach (string value in Model.Conditions) { <option value="@value">@value</option> }</select>
+        <button class="button secondary" type="submit">Apply filters</button>
+        <a class="button ghost" asp-page="Stock">Clear filters</a>
+    </form>
+    <div class="stock-breakdown">
+        <div><h3>Available by location</h3>@foreach (var row in Model.ByLocation) { <a asp-route-Location="@row.Label"><span>@row.Label</span><strong>@row.Count</strong></a> }</div>
+        <div><h3>Available by equipment type</h3>@foreach (var row in Model.ByType) { <a asp-route-AssetType="@row.Label"><span>@row.Label</span><strong>@row.Count</strong></a> }</div>
+    </div>
+    <div class="table-wrap">
+        <table class="data-table responsive-table available-assets-table">
+            <thead><tr><th>Asset / Hostname</th><th>Equipment type</th><th>Serial number</th><th>Condition</th><th>Location</th><th>Actions</th></tr></thead>
+            <tbody>
+            @foreach (var asset in Model.Assets)
+            {
+                <tr data-href="@Url.Page("Details", new { id = asset.AssetId, ReturnUrl = stockReturnUrl })" tabindex="0">
+                    <td data-label="Asset / Hostname"><strong>@(asset.Hostname ?? asset.AssetTag)</strong><small>@asset.AssetTag</small></td>
+                    <td data-label="Equipment type">@(asset.Workstation ?? asset.AssetType)</td>
+                    <td data-label="Serial number">@(asset.SerialNumber ?? "—")</td>
+                    <td data-label="Condition">@asset.Condition</td>
+                    <td data-label="Location">@(asset.CurrentLocation ?? asset.Location ?? "Unknown")</td>
+                    <td class="row-link-cell" data-label="Actions">
+                        <a class="row-action" asp-page="Details" asp-route-id="@asset.AssetId" asp-route-ReturnUrl="@stockReturnUrl" aria-label="View asset">›</a>
+                        <form method="post" asp-page-handler="DeleteAsset" asp-route-id="@asset.AssetId" class="inline-form" onclick="event.stopPropagation()" onsubmit="event.stopPropagation(); return confirm('Remove @(asset.Hostname ?? asset.AssetTag) from available stock? This action is recorded in the audit log.');">
+                            <input type="hidden" name="Query" value="@Model.Query" />
+                            <input type="hidden" name="AssetType" value="@Model.AssetType" />
+                            <input type="hidden" name="Location" value="@Model.Location" />
+                            <input type="hidden" name="Condition" value="@Model.Condition" />
+                            <button class="button danger-outline small" type="submit">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+        @if (Model.Assets.Count == 0) { <div class="empty-state compact"><p>No available equipment matches these filters.</p></div> }
+    </div>
+</section>
+
+@section Scripts {
+<script>
+document.addEventListener("click", event => {
+  const edit = event.target.closest("[data-edit-target]");
+  if (edit) {
+    document.getElementById("TargetId").value = edit.dataset.id;
+    document.getElementById("TargetAssetType").value = edit.dataset.type;
+    document.getElementById("TargetLocation").value = edit.dataset.location;
+    document.getElementById("TargetQuantity").value = edit.dataset.quantity;
+    document.getElementById("ThresholdPercent").value = edit.dataset.percent;
+    document.getElementById("stock-form-title").textContent = "Edit stock level goal";
+    document.getElementById("stock-target-form").scrollIntoView({behavior:"smooth", block:"center"});
+  }
+  if (event.target.closest("[data-clear-target]")) {
+    document.getElementById("TargetId").value = "0";
+    document.getElementById("stock-form-title").textContent = "Set a stock level goal";
+  }
+});
+</script>
+}

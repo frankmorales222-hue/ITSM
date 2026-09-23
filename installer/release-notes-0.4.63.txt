@@ -1,0 +1,7 @@
+Northstar Desk 0.4.63
+
+- Makes offline updates run through a supervised Windows task so the updater remains alive while Northstar restarts.
+- Stops and restarts Northstar components in the same safe order used by the full installer.
+- Preserves installer and exit-code diagnostics and reports failed updates promptly.
+
+No ticket, routing, chat, form, report, or user-interface behavior is changed.

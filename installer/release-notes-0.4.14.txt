@@ -1,0 +1,5 @@
+Infinx visual theme restoration only.
+
+- Restores the blue Infinx-inspired palette across the existing Northstar Desk interface.
+- Updates navigation, forms, reports, tickets, administration, login, and status colors only.
+- No application workflows, data models, integrations, permissions, or routing behavior changed.

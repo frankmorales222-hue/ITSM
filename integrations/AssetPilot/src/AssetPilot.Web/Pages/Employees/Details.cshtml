@@ -1,0 +1,53 @@
+@page "{id:int}"
+@model AssetPilot.Web.Pages.Employees.DetailsModel
+@using AssetPilot.Domain.People
+@{
+    ViewData["Title"] = Model.Employee.DisplayName;
+    ViewData["Section"] = "Employees";
+    List<AssetAssignment> current = Model.Employee.Assignments.Where(x => x.ReturnedUtc == null).OrderByDescending(x => x.AssignedUtc).ToList();
+}
+<div class="page-heading">
+    <div><a class="back-link" asp-page="Index">← Back to employees</a><p class="eyebrow">EMPLOYEE</p><h1>@Model.Employee.DisplayName</h1><p class="muted">@Model.Employee.EmployeeNumber · @Model.Employee.Email</p></div>
+    <div class="page-actions"><a class="button primary" asp-page="Edit" asp-route-id="@Model.Employee.EmployeeId">Edit employee</a><form method="post" asp-page-handler="ToggleActive" asp-route-id="@Model.Employee.EmployeeId"><button class="button secondary" type="submit">@(Model.Employee.IsActive ? "Disable employee" : "Enable employee")</button></form></div>
+</div>
+<div asp-validation-summary="All" class="validation"></div>
+<div class="employee-detail-grid">
+    <section class="info-card"><h2>Employee information</h2><dl><dt>Email</dt><dd>@Model.Employee.Email</dd><dt>Department</dt><dd>@(Model.Employee.Department ?? "—")</dd><dt>Manager</dt><dd>@(Model.Employee.Manager ?? "—")</dd><dt>Location</dt><dd>@(Model.Employee.Location ?? "—")</dd><dt>Phone</dt><dd>@(Model.Employee.Phone ?? "—")</dd><dt>Status</dt><dd>@(Model.Employee.IsActive ? "Active" : "Disabled")</dd></dl></section>
+    <section class="panel employee-assets">
+        <div class="panel-heading"><div><h2>Current assets</h2><p>Click an asset to inspect it without leaving this employee.</p></div><strong>@current.Count</strong></div>
+        @if (current.Count == 0) { <div class="empty-state compact"><p>No assets are currently assigned.</p></div> }
+        @foreach (var assignment in current)
+        {
+            <article class="employee-asset-row">
+                <button type="button" class="asset-quick-link" data-open-dialog="asset-@assignment.AssetId"><span class="asset-avatar">▰</span><span><strong>@(assignment.Asset.Hostname ?? assignment.Asset.AssetTag)</strong><small>@assignment.Asset.AssetType · @assignment.Asset.AssetTag · @assignment.Asset.SerialNumber</small></span><span class="status-chip active">Assigned</span></button>
+                <form method="post" asp-page-handler="Return" asp-route-id="@Model.Employee.EmployeeId" asp-route-assignmentId="@assignment.AssetAssignmentId">
+                    <input type="hidden" asp-for="ReturnCondition" value="@assignment.Asset.Condition" /><button class="button secondary small" type="submit">Return to stock</button>
+                </form>
+            </article>
+            <dialog id="asset-@assignment.AssetId" class="asset-dialog">
+                <div class="dialog-heading"><div><p class="eyebrow">ASSET QUICK VIEW</p><h2>@(assignment.Asset.Hostname ?? assignment.Asset.AssetTag)</h2><p>@assignment.Asset.Name</p></div><button type="button" data-close-dialog aria-label="Close">×</button></div>
+                <div class="dialog-grid"><dl><dt>Asset tag</dt><dd>@assignment.Asset.AssetTag</dd><dt>Serial number</dt><dd>@(assignment.Asset.SerialNumber ?? "—")</dd><dt>Type</dt><dd>@assignment.Asset.AssetType</dd><dt>Manufacturer</dt><dd>@(assignment.Asset.Manufacturer ?? "—")</dd><dt>Model</dt><dd>@(assignment.Asset.Model ?? "—")</dd></dl><dl><dt>Status</dt><dd>@assignment.Asset.Status</dd><dt>Condition</dt><dd>@assignment.Asset.Condition</dd><dt>Location</dt><dd>@(assignment.Asset.CurrentLocation ?? assignment.Asset.Location ?? "—")</dd><dt>Assigned</dt><dd>@assignment.AssignedUtc.ToLocalTime().ToString("MMM d, yyyy")</dd><dt>Notes</dt><dd>@(assignment.Notes ?? "—")</dd></dl></div>
+                <div class="dialog-actions"><button class="button secondary" type="button" data-close-dialog>Stay on employee</button><a class="button primary" asp-page="/Assets/Details" asp-route-id="@assignment.AssetId" asp-route-ReturnUrl="@Url.Page("/Employees/Details", new { id = Model.Employee.EmployeeId })">Open full asset record</a></div>
+            </dialog>
+        }
+    </section>
+</div>
+@if (Model.Employee.IsActive)
+{
+    <section class="form-section assign-from-employee">
+        <div class="section-title"><span class="section-icon">＋</span><div><h2>Assign another asset</h2><p>Only assets currently available in stock are shown. Assignment immediately updates stock totals.</p></div></div>
+        <form method="post" asp-page-handler="Assign" asp-route-id="@Model.Employee.EmployeeId">
+            <div class="form-grid"><label><span>Available asset</span><select asp-for="AssetId"><option value="">Choose an asset</option>@foreach (var asset in Model.AvailableAssets) { <option value="@asset.AssetId">@(asset.Hostname ?? asset.AssetTag) — @asset.AssetType — @(asset.CurrentLocation ?? asset.Location ?? "Unknown")</option> }</select></label><label><span>Assignment notes</span><input asp-for="Notes" /></label></div>
+            <div class="form-actions"><button class="button primary" type="submit">Assign asset</button><a class="button secondary" asp-page="/Assets/Create" asp-route-employeeId="@Model.Employee.EmployeeId">Create and assign a new asset</a></div>
+        </form>
+    </section>
+}
+<section class="panel">
+    <div class="panel-heading"><div><h2>Assignment history</h2><p>Complete, permanent history for audit review.</p></div></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Asset</th><th>Assigned</th><th>Returned</th><th>Condition</th><th>Notes</th></tr></thead><tbody>
+    @foreach (var assignment in Model.Employee.Assignments.OrderByDescending(x => x.AssignedUtc))
+    {
+        <tr><td><a class="asset-link" asp-page="/Assets/Details" asp-route-id="@assignment.AssetId" asp-route-ReturnUrl="@Url.Page("/Employees/Details", new { id = Model.Employee.EmployeeId })">@(assignment.Asset.Hostname ?? assignment.Asset.AssetTag)</a><small>@assignment.Asset.AssetTag</small></td><td>@assignment.AssignedUtc.ToLocalTime().ToString("MMM d, yyyy")</td><td>@(assignment.ReturnedUtc?.ToLocalTime().ToString("MMM d, yyyy") ?? "Current")</td><td>@(assignment.ReturnCondition ?? assignment.Asset.Condition)</td><td>@(assignment.ReturnNotes ?? assignment.Notes ?? "—")</td></tr>
+    }
+    </tbody></table></div>
+</section>

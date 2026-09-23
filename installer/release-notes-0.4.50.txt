@@ -1,0 +1,4 @@
+Northstar Desk 0.4.50
+
+- Fixes live-chat Send navigation so messages remain on the current ticket page.
+- Ensures all live-chat controls use explicit in-app actions.

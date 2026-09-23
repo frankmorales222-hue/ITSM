@@ -1,0 +1,7 @@
+Northstar Desk 0.4.35
+
+- Outlook replies now update the existing ticket even when Outlook has already marked the message read.
+- Requester closure instructions can close any open ticket and record an audit-safe timeline note.
+- Assigned technicians can start live chat or a Microsoft Teams support session from Ticket Detail.
+- Added requester-approved endpoint actions for closing a hung application and restarting a Windows service.
+- Includes Northstar Endpoint Agent 0.1.13.

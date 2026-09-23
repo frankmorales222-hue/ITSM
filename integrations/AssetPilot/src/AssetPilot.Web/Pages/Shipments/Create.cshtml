@@ -1,0 +1,81 @@
+@page
+@model AssetPilot.Web.Pages.Shipments.CreateModel
+@{
+    ViewData["Title"] = "Create Shipment";
+    ViewData["Section"] = "Shipments";
+}
+<div class="page-heading">
+    <div>
+        <a class="back-link" asp-page="Index">← Back to shipments</a>
+        <h1>Create shipment</h1>
+        <p class="muted">Record an incoming, outgoing, return, or repair movement.</p>
+    </div>
+</div>
+<form method="post" class="editor-layout">
+    <div class="editor-main">
+        <section class="form-section">
+            <div class="form-grid">
+                <label><span>Shipment number *</span><input asp-for="Input.ShipmentNumber" /></label>
+                <label><span>Direction *</span><select asp-for="Input.Direction"><option>Incoming</option><option>Outgoing</option><option>Return</option><option>Repair</option></select></label>
+                <label><span>Carrier</span><input asp-for="Input.Carrier" /></label>
+                <label><span>Tracking number</span><input asp-for="Input.TrackingNumber" /></label>
+                <label><span>Sender</span><input asp-for="Input.Sender" /></label>
+                <label><span>Recipient</span><input asp-for="Input.Recipient" /></label>
+                <label><span>Origin</span><input asp-for="Input.Origin" /></label>
+                <label><span>Destination</span><input asp-for="Input.Destination" /></label>
+                <label><span>Ship date</span><input asp-for="Input.ShipDate" type="date" /></label>
+                <label><span>Expected date</span><input asp-for="Input.ExpectedDate" type="date" /></label>
+                <label><span>Notes</span><input asp-for="Input.Notes" /></label>
+            </div>
+        </section>
+        <section class="panel">
+            <div class="panel-heading">
+                <div><h2>Assets</h2><p>Select one or more inventory records</p></div>
+            </div>
+            <div class="asset-picker-search">
+                <label for="assetSearch">Search assets</label>
+                <input id="assetSearch" type="search" placeholder="Search by asset tag, hostname, serial number, type, name, status, or location" autocomplete="off" />
+                <span id="assetSearchCount" class="muted" aria-live="polite"></span>
+            </div>
+            <div class="asset-picker" id="assetPicker">
+                @foreach (var asset in Model.Assets)
+                {
+                    string searchable = string.Join(" ", new[] { asset.AssetTag, asset.Hostname, asset.SerialNumber, asset.AssetType, asset.Name, asset.Status, asset.CurrentLocation, asset.Location }.Where(x => !string.IsNullOrWhiteSpace(x)));
+                    <label data-asset-search="@searchable">
+                        <input type="checkbox" name="AssetIds" value="@asset.AssetId" checked="@Model.AssetIds.Contains(asset.AssetId)" />
+                        <span><strong>@asset.AssetTag</strong><small>@asset.Name · @asset.Status</small></span>
+                    </label>
+                }
+            </div>
+            <div id="assetSearchEmpty" class="empty-state compact" hidden>No assets match your search.</div>
+            <span asp-validation-for="AssetIds" class="validation"></span>
+        </section>
+    </div>
+    <aside class="action-panel">
+        <button class="button primary full" type="submit">Create shipment</button>
+        <a class="button secondary full" asp-page="Index">Cancel</a>
+        <div asp-validation-summary="All" class="validation"></div>
+    </aside>
+</form>
+<script>
+(() => {
+    const search = document.getElementById('assetSearch');
+    const rows = [...document.querySelectorAll('#assetPicker [data-asset-search]')];
+    const count = document.getElementById('assetSearchCount');
+    const empty = document.getElementById('assetSearchEmpty');
+    const filter = () => {
+        const terms = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+        let visible = 0;
+        rows.forEach(row => {
+            const value = row.dataset.assetSearch.toLocaleLowerCase();
+            const matches = terms.every(term => value.includes(term));
+            row.hidden = !matches;
+            if (matches) visible++;
+        });
+        count.textContent = search.value.trim() ? `${visible} matching asset${visible === 1 ? '' : 's'}` : `${rows.length} assets`;
+        empty.hidden = visible !== 0;
+    };
+    search.addEventListener('input', filter);
+    filter();
+})();
+</script>

@@ -1,0 +1,5 @@
+.assignment-transfer{border:1px solid var(--line);background:#f7faf7;border-radius:7px;padding:13px;margin:14px 0 18px}
+.assignment-transfer>p{font-size:.72rem;font-weight:800;margin:0 0 8px;color:var(--forest)}
+.assignment-transfer label{margin:10px 0!important}
+.assignment-transfer button{width:100%;margin-top:4px;padding:9px 12px;font-size:.72rem}
+.assignment-transfer .reassign-error{display:block;color:#94371f;font-size:.67rem;line-height:1.35}

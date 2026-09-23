@@ -1,0 +1,6 @@
+Northstar Desk 0.4.12
+
+- Keeps requester email replies on the original ticket by enforcing and recognizing the ticket number in message subjects.
+- Routes new inbound mailbox requests through active routing rules.
+- Adds requester email and requester domain routing conditions.
+- Applies configured queue or rule round-robin assignment to inbound email requests.

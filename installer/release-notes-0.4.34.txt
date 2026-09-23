@@ -1,0 +1,7 @@
+Northstar Desk 0.4.34
+
+- Keeps requester and technician email replies on the original ticket.
+- Records outbound Microsoft 365 and SMTP message identifiers for reliable In-Reply-To and References matching.
+- Preserves ticket-number subject matching as a fallback when mail clients remove provider headers.
+- Safely recognizes older subject-only replies when exactly one ticket for that requester matches.
+- Does not change ticket routing, queues, assignment rules, forms, or the user interface.

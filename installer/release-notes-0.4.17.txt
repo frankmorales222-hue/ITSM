@@ -1,0 +1,4 @@
+Northstar Desk 0.4.17
+
+Theme-only release: Appearance is now a standalone Settings item with Light,
+Dark, and Modern choices. No application behavior or data logic changed.

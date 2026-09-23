@@ -1,0 +1,10 @@
+Northstar Desk 0.4.72
+
+Focused reliability update.
+
+- Ticket device support shows CPU, memory, Windows version, and uptime reported by the connected endpoint agent.
+- Incoming email attachments, including Outlook inline images, are saved as ticket attachments. CID placeholders are removed from the conversation text.
+- Endpoint Agent 0.1.22 retries desktop notifications when Windows does not accept the first popup and checks requester-approved actions every 15–30 seconds.
+- Endpoint action failures are recorded with specific details instead of failing silently.
+
+This release does not change routing, HTTPS certificates, themes, authentication, or existing ticket workflows.

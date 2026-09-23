@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>AssetPilot.Domain</AssemblyName>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <RootNamespace>AssetPilot.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

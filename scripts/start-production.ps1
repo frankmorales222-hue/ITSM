@@ -16,9 +16,10 @@ if ($LASTEXITCODE -ne 0) { throw "Production readiness checks failed." }
 
 $worker = Start-Process -FilePath ".venv\Scripts\python.exe" -ArgumentList "-m","itsm.worker" -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
 $forwardedAllowIps = & ".venv\Scripts\python.exe" -c "from itsm.config import settings; print(settings.forwarded_allow_ips)"
+$bindHost = & ".venv\Scripts\python.exe" -c "from itsm.config import settings; print(settings.bind_host)"
 Write-Host "Northstar Desk production process is starting."
 try {
-    & ".venv\Scripts\python.exe" -m uvicorn itsm.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips $forwardedAllowIps
+    & ".venv\Scripts\python.exe" -m uvicorn itsm.main:app --host $bindHost --port 8000 --proxy-headers --forwarded-allow-ips $forwardedAllowIps
 } finally {
     Stop-Process -Id $worker.Id -Force -ErrorAction SilentlyContinue
 }

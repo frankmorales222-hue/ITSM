@@ -1,0 +1,127 @@
+@page "{id:int}"
+@model AssetPilot.Web.Pages.Assets.DetailsModel
+@using AssetPilot.Domain.People
+@{
+    ViewData["Title"] = Model.Asset.AssetTag;
+    ViewData["Section"] = "Assets";
+    AssetAssignment? current = Model.Asset.Assignments.FirstOrDefault(x => x.ReturnedUtc == null);
+    string currentAssetUrl = Model.Request.Path + Model.Request.QueryString;
+}
+<div data-tab-root>
+    <div class="asset-hero">
+        <div>
+            <a class="back-link" href="@Model.ReturnUrl">← @Model.BackLabel</a>
+            <div class="asset-title-row"><div class="device-tile">▰</div><div><h1>@(Model.Asset.Hostname ?? Model.Asset.AssetTag)</h1><p>@Model.Asset.Name</p><div class="chip-row"><span class="status-chip @Model.Asset.Status.ToLowerInvariant().Replace(" ", "-")">@Model.Asset.Status</span><span class="meta-chip">@Model.Asset.AssetType</span><span class="meta-chip">@(Model.Asset.CurrentLocation ?? Model.Asset.Location ?? "Unknown")</span></div></div></div>
+        </div>
+        <section class="hero-summary">
+            <div><small>Asset tag</small><strong>@Model.Asset.AssetTag</strong><small>Hostname</small><strong>@(Model.Asset.Hostname ?? "—")</strong><small>Serial number</small><strong>@(Model.Asset.SerialNumber ?? "—")</strong></div>
+            <div><small>Status</small><strong class="green">@Model.Asset.Status</strong><small>Condition</small><strong>@Model.Asset.Condition</strong><small>Category</small><strong>@Model.Asset.Category</strong></div>
+            <div><small>Assigned to</small><strong class="blue">@(current?.Employee.DisplayName ?? "Unassigned")</strong><small>Location</small><strong>@(Model.Asset.CurrentLocation ?? Model.Asset.Location ?? "—")</strong><small>Last updated</small><strong>@Model.Asset.ModifiedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</strong></div>
+        </section>
+        <aside class="action-panel">
+            <p class="eyebrow">ACTIONS</p>
+            <a class="button primary full" asp-page="Edit" asp-route-id="@Model.Asset.AssetId">Edit asset</a>
+            <button class="button secondary full" type="button" data-tab-target="assignment">Assign or transfer</button>
+            <a class="button secondary full" asp-page="/Shipments/Create" asp-route-assetId="@Model.Asset.AssetId">Create shipment</a>
+            <form method="post" asp-page-handler="Archive" asp-route-id="@Model.Asset.AssetId" asp-route-ReturnUrl="@Model.ReturnUrl" onsubmit="return confirm('Archive this asset?');"><button class="button danger-outline full" type="submit">Archive asset</button></form>
+        </aside>
+    </div>
+    <nav class="detail-tabs" aria-label="Asset details">
+        <button class="active" type="button" data-tab-target="overview">Overview</button>
+        <button type="button" data-tab-target="identification">Identification</button>
+        <button type="button" data-tab-target="assignment">Assignment</button>
+        <button type="button" data-tab-target="location">Location</button>
+        <button type="button" data-tab-target="shipments">Shipments</button>
+        <button type="button" data-tab-target="financial">Financial</button>
+        <button type="button" data-tab-target="lifecycle">Lifecycle</button>
+        <button type="button" data-tab-target="audit">Audit history</button>
+    </nav>
+    @if (Model.MonitorWarningCount > 0)
+    {
+        <section class="asset-data-warning" role="alert">
+            <strong>Monitor information needs attention</strong>
+            <span>@Model.MonitorWarningCount of 3 monitor records have missing asset-tag or serial-number information. Review the associated equipment below.</span>
+        </section>
+    }
+    <section data-tab-panel="overview">
+        <div class="detail-grid">
+            <article class="info-card"><div class="card-title"><h2>Asset information</h2></div><dl><dt>Type</dt><dd>@Model.Asset.AssetType</dd><dt>Category</dt><dd>@Model.Asset.Category</dd><dt>Manufacturer</dt><dd>@(Model.Asset.Manufacturer ?? "—")</dd><dt>Model</dt><dd>@(Model.Asset.Model ?? "—")</dd><dt>Company</dt><dd>@(Model.Asset.Company ?? "—")</dd><dt>Purpose</dt><dd>@(Model.Asset.Purpose ?? "—")</dd></dl></article>
+            <article class="info-card"><div class="card-title"><h2>Current assignment</h2></div><dl><dt>Employee</dt><dd>@(current?.Employee.DisplayName ?? "Unassigned")</dd><dt>Email</dt><dd>@(current?.Employee.Email ?? "—")</dd><dt>Department</dt><dd>@(current?.Employee.Department ?? "—")</dd><dt>Assigned</dt><dd>@(current?.AssignedUtc.ToLocalTime().ToString("MMM d, yyyy") ?? "—")</dd></dl></article>
+            <article class="info-card"><div class="card-title"><h2>Status & warranty</h2></div><dl><dt>Status</dt><dd>@Model.Asset.Status</dd><dt>Condition</dt><dd>@Model.Asset.Condition</dd><dt>Warranty</dt><dd>@(Model.Asset.WarrantyExpiration?.ToString("MMM d, yyyy") ?? "—")</dd><dt>Age</dt><dd>@Model.AssetAge</dd></dl></article>
+            <article class="info-card"><div class="card-title"><h2>Included equipment</h2></div><dl><dt>Dock</dt><dd>@(Model.Asset.DockingStation ?? "—")</dd><dt>Keyboard</dt><dd>@(Model.Asset.Keyboard ?? "—")</dd><dt>Mouse</dt><dd>@(Model.Asset.Mouse ?? "—")</dd><dt>Headset</dt><dd>@(Model.Asset.Headset ?? "—")</dd><dt>Printer</dt><dd>@(Model.Asset.Printer ?? "—")</dd></dl></article>
+        </div>
+        <div class="associated-equipment-grid">
+            <article class="info-card">
+                <div class="card-title"><h2>Recorded monitors</h2><span>@(3 - Model.MonitorWarningCount) complete</span></div>
+                <div class="monitor-list">
+                @foreach (var monitor in Model.Monitors)
+                {
+                    <div class="monitor-row @(!monitor.IsComplete ? "incomplete" : "")">
+                        <span class="monitor-number">@monitor.Number</span>
+                        <span><strong>@(monitor.AssetTag ?? "Asset tag missing")</strong><small>@(monitor.SerialNumber ?? "Serial number missing")</small></span>
+                        <span class="status-chip @(monitor.IsComplete ? "active" : "alert")">@(monitor.IsComplete ? "Complete" : monitor.Warning)</span>
+                    </div>
+                }
+                </div>
+            </article>
+            <article class="info-card">
+                <div class="card-title"><h2>Other assets assigned to this user</h2><span>@Model.AssociatedAssets.Count</span></div>
+                @if (Model.AssociatedAssets.Count == 0)
+                {
+                    <p class="muted compact-copy">No other inventory records are assigned to this user.</p>
+                }
+                else
+                {
+                    <div class="associated-asset-list">
+                    @foreach (var related in Model.AssociatedAssets)
+                    {
+                        <a asp-page="Details" asp-route-id="@related.AssetId" asp-route-ReturnUrl="@currentAssetUrl">
+                            <span><strong>@(related.Hostname ?? related.AssetTag)</strong><small>@related.AssetType &middot; @related.AssetTag</small></span>
+                            <span>@related.Status</span>
+                            <em>&rsaquo;</em>
+                        </a>
+                    }
+                    </div>
+                }
+            </article>
+        </div>
+    </section>
+    <section data-tab-panel="identification" hidden>
+        <div class="two-column-detail">
+            <article class="info-card"><h2>Identifiers</h2><dl><dt>Asset tag</dt><dd>@Model.Asset.AssetTag</dd><dt>Hostname</dt><dd>@(Model.Asset.Hostname ?? "—")</dd><dt>Serial</dt><dd>@(Model.Asset.SerialNumber ?? "—")</dd><dt>MAC</dt><dd>@(Model.Asset.MacAddress ?? "—")</dd><dt>Workstation</dt><dd>@(Model.Asset.Workstation ?? "—")</dd></dl></article>
+            <article class="info-card">
+                <h2>Network addresses</h2>
+                <div class="network-list">@foreach (var address in Model.Asset.NetworkAddresses.OrderByDescending(x => x.IsPrimary)) { <div><strong>@address.AddressType</strong><span>@address.Address</span>@if (address.IsPrimary) { <small>Primary</small> }<form method="post" asp-page-handler="RemoveNetwork" asp-route-id="@Model.Asset.AssetId" asp-route-addressId="@address.AssetNetworkAddressId" asp-route-ReturnUrl="@Model.ReturnUrl"><button class="link-button danger" type="submit">Remove</button></form></div> }</div>
+                <form method="post" asp-page-handler="AddNetwork" asp-route-id="@Model.Asset.AssetId" asp-route-ReturnUrl="@Model.ReturnUrl" class="network-form">
+                    <select asp-for="NetworkInput.AddressType">@foreach (string type in AssetPilot.Web.Pages.Assets.DetailsModel.NetworkAddressInput.Types) { <option>@type</option> }</select>
+                    <input asp-for="NetworkInput.Address" placeholder="Address" /><label><input asp-for="NetworkInput.IsPrimary" /> Primary</label><button class="button secondary" type="submit">Add</button>
+                </form><span asp-validation-for="NetworkInput.Address" class="validation"></span>
+            </article>
+        </div>
+    </section>
+    <section data-tab-panel="assignment" hidden>
+        <div class="two-column-detail">
+            <article class="form-section">
+                <h2>@(current is null ? "Assign asset" : "Transfer asset")</h2>
+                <p>Select an active employee. Saving here immediately removes the asset from available stock.</p>
+                <form method="post" asp-page-handler="Assign" asp-route-id="@Model.Asset.AssetId" asp-route-ReturnUrl="@Model.ReturnUrl" class="form-stack">
+                    <label>Employee<select asp-for="EmployeeId"><option value="">Choose an employee</option>@foreach (var employee in Model.AvailableEmployees) { <option value="@employee.EmployeeId">@employee.DisplayName — @employee.EmployeeNumber</option> }</select></label>
+                    <label>Assignment or transfer notes<input asp-for="AssignmentNotes" /></label>
+                    <button class="button primary" type="submit">@(current is null ? "Assign asset" : "Transfer asset")</button>
+                </form>
+                @if (current is not null)
+                {
+                    <form method="post" asp-page-handler="ReturnToStock" asp-route-id="@Model.Asset.AssetId" asp-route-ReturnUrl="@Model.ReturnUrl" class="return-stock-form" onsubmit="return confirm('Return this asset to available stock?');">
+                        <button class="button secondary" type="submit">Return to stock</button>
+                    </form>
+                }
+            </article>
+            <article class="info-card"><h2>Assignment history</h2><ul class="audit-list">@foreach (var assignment in Model.Asset.Assignments.OrderByDescending(x => x.AssignedUtc)) { <li><span><strong>@assignment.Employee.DisplayName</strong><small>@assignment.AssignedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt") → @(assignment.ReturnedUtc?.ToLocalTime().ToString("MMM d, yyyy h:mm tt") ?? "Current")</small></span><span>@assignment.Notes</span></li> }</ul></article>
+        </div>
+    </section>
+    <section data-tab-panel="location" hidden><article class="info-card wide-card"><h2>Location details</h2><dl><dt>Current location</dt><dd>@(Model.Asset.CurrentLocation ?? "—")</dd><dt>Recorded location</dt><dd>@(Model.Asset.Location ?? "—")</dd><dt>Work mode</dt><dd>@(Model.Asset.OfficeWorkMode ?? "—")</dd><dt>Workstation</dt><dd>@(Model.Asset.Workstation ?? "—")</dd><dt>Project</dt><dd>@(Model.Asset.Project ?? "—")</dd></dl></article></section>
+    <section data-tab-panel="shipments" hidden><article class="panel"><div class="panel-heading"><h2>Shipment history</h2></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Shipment</th><th>Direction</th><th>Status</th><th>Destination</th></tr></thead><tbody>@foreach (var item in Model.Asset.ShipmentItems.OrderByDescending(x => x.Shipment.ShipDate)) { <tr data-href="@Url.Page("/Shipments/Details", new { id = item.ShipmentId })" tabindex="0"><td>@item.Shipment.ShipmentNumber</td><td>@item.Shipment.Direction</td><td>@item.Shipment.Status</td><td>@item.Shipment.Destination</td></tr> }</tbody></table></div></article></section>
+    <section data-tab-panel="financial" hidden><article class="info-card wide-card"><h2>Financial</h2><dl><dt>Purchase date</dt><dd>@(Model.Asset.PurchaseDate?.ToString("MMM d, yyyy") ?? "—")</dd><dt>Purchase cost</dt><dd>@(Model.Asset.PurchaseCostCents.HasValue ? (Model.Asset.PurchaseCostCents.Value / 100m).ToString("C") : "—")</dd><dt>Vendor</dt><dd>@(Model.Asset.Vendor ?? "—")</dd><dt>Company</dt><dd>@(Model.Asset.Company ?? "—")</dd></dl></article></section>
+    <section data-tab-panel="lifecycle" hidden><article class="info-card wide-card"><h2>Lifecycle history</h2><ul class="timeline">@foreach (var history in Model.Asset.StatusHistory.OrderByDescending(x => x.ChangedUtc)) { <li class="@(history.ToStatus == Model.Asset.Status ? "current" : "")"><strong>@history.ToStatus</strong><small>@(history.FromStatus ?? "Created") → @history.ToStatus</small><time>@history.ChangedUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</time><small>@history.Reason</small></li> }</ul></article></section>
+    <section data-tab-panel="audit" hidden><article class="panel"><div class="panel-heading"><div><h2>Audit history</h2><p>Recorded changes and operational events for this asset.</p></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Correlation</th></tr></thead><tbody>@foreach (var item in Model.AuditHistory) { <tr><td>@item.EventUtc.ToLocalTime().ToString("MMM d, yyyy h:mm tt")</td><td>@item.EventTypeCode</td><td>@(item.Reason ?? "—")</td><td><code>@item.CorrelationId</code></td></tr> }</tbody></table></div></article></section>
+</div>

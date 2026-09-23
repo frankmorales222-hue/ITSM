@@ -1,0 +1,6 @@
+Northstar Desk 0.4.42
+
+Requester ticket history
+- Added a searchable Ticket history view for end users.
+- History is limited to tickets the requester is authorized to view.
+- Existing open, waiting, resolved, and closed views remain unchanged.

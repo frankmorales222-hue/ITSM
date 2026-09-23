@@ -1,0 +1,7 @@
+Northstar Desk 0.4.49
+
+- Fixed ticket and chat views that required a manual browser refresh to show external updates.
+- Added automatic chat-session discovery and immediate refresh when returning to the browser.
+- Added a secure requester approval prompt for endpoint actions across the portal.
+- Kept endpoint approval available in the web portal when the endpoint agent is offline.
+- Added live notification refresh and requester-scoped endpoint approval safeguards.

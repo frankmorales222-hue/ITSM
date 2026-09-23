@@ -1,0 +1,3 @@
+Northstar Desk 0.4.66
+
+HTTPS certificate installation now accepts the standard three-file certificate package supplied by GoDaddy and other certificate authorities: server certificate, matching private key, and a separate .p7b or PEM intermediate certificate chain. The server validates the complete chain and writes a verified PEM full chain for the HTTPS listener.

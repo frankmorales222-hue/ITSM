@@ -1,0 +1,29 @@
+@page
+@model AssetPilot.Web.Pages.Assets.CreateModel
+@{
+    ViewData["Title"] = "Add Asset";
+    ViewData["Section"] = "Assets";
+}
+<div class="page-heading">
+    <div>
+        <p class="eyebrow">ASSET INVENTORY</p>
+        <h1>Add asset</h1>
+        <p class="muted">Enter the complete inventory record, monitors, and optional peripherals.</p>
+    </div>
+</div>
+<form method="post" class="editor-layout">
+    <input asp-for="EmployeeId" type="hidden" />
+    <div class="editor-main">
+        <div asp-validation-summary="ModelOnly" class="validation"></div>
+        <partial name="_AssetForm" for="Input" />
+    </div>
+    <aside class="action-panel">
+        <p class="eyebrow">ACTIONS</p>
+        <button class="button primary full" type="submit">Save asset</button>
+        <a class="button secondary full" asp-page="Index">Cancel</a>
+        @if (Model.EmployeeId.HasValue)
+        {
+            <p class="action-note">Saving will assign this asset to the employee you just created.</p>
+        }
+    </aside>
+</form>

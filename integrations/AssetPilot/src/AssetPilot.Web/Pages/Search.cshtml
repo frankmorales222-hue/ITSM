@@ -1,0 +1,61 @@
+@page
+@model AssetPilot.Web.Pages.SearchModel
+@{
+    ViewData["Title"] = "Search";
+    ViewData["Section"] = "Search";
+    string searchReturnUrl = Url.Page("/Search", new { Model.Q }) ?? "/Search";
+}
+<div class="search-page-heading">
+    <p class="eyebrow">GLOBAL SEARCH</p>
+    <h1>@(string.IsNullOrWhiteSpace(Model.Q) ? "Find anything" : $"Results for “{Model.Q}”")</h1>
+    <p>@(string.IsNullOrWhiteSpace(Model.Q) ? "Search assets, employees, shipments, serial numbers, locations, and tracking numbers." : $"{Model.TotalResults} results across the application")</p>
+</div>
+<form method="get" class="search-page-form">
+    <span aria-hidden="true">⌕</span>
+    <input asp-for="Q" autofocus placeholder="Try a name, asset tag, hostname, serial number, location, or tracking number" />
+    <button class="button primary" type="submit">Search</button>
+</form>
+@if (!string.IsNullOrWhiteSpace(Model.Q))
+{
+    <div class="search-result-grid">
+        <section class="panel search-result-section">
+            <div class="panel-heading"><div><h2>Assets</h2><p>Inventory records matching your search.</p></div><span class="result-count">@Model.Assets.Count</span></div>
+            @foreach (var asset in Model.Assets)
+            {
+                <a class="search-result-row" asp-page="/Assets/Details" asp-route-id="@asset.Id" asp-route-ReturnUrl="@searchReturnUrl">
+                    <span class="result-icon asset">A</span>
+                    <span><strong>@asset.Title</strong><small>@asset.AssetTag · @asset.AssetType · @(asset.AssignedTo ?? "Unassigned")</small></span>
+                    <span><span class="status-chip @asset.Status.ToLowerInvariant().Replace(" ", "-")">@asset.Status</span><small>@(asset.Location ?? "Unknown location")</small></span>
+                    <span aria-hidden="true">›</span>
+                </a>
+            }
+            @if (Model.Assets.Count == 0) { <div class="empty-state compact"><p>No matching assets.</p></div> }
+        </section>
+        <section class="panel search-result-section">
+            <div class="panel-heading"><div><h2>Employees</h2><p>People and their current assignments.</p></div><span class="result-count">@Model.Employees.Count</span></div>
+            @foreach (var employee in Model.Employees)
+            {
+                <a class="search-result-row" asp-page="/Employees/Details" asp-route-id="@employee.Id">
+                    <span class="result-icon employee">E</span>
+                    <span><strong>@employee.Name</strong><small>@employee.EmployeeNumber · @employee.Email</small></span>
+                    <span><strong>@employee.AssignedAssets asset(s)</strong><small>@(employee.Department ?? "No department") · @(employee.Location ?? "No location")</small></span>
+                    <span aria-hidden="true">›</span>
+                </a>
+            }
+            @if (Model.Employees.Count == 0) { <div class="empty-state compact"><p>No matching employees.</p></div> }
+        </section>
+        <section class="panel search-result-section">
+            <div class="panel-heading"><div><h2>Shipments</h2><p>Shipment, carrier, recipient, and tracking matches.</p></div><span class="result-count">@Model.Shipments.Count</span></div>
+            @foreach (var shipment in Model.Shipments)
+            {
+                <a class="search-result-row" asp-page="/Shipments/Details" asp-route-id="@shipment.Id">
+                    <span class="result-icon shipment">S</span>
+                    <span><strong>@shipment.Number</strong><small>@shipment.Direction · @(shipment.Carrier ?? "No carrier") · @(shipment.TrackingNumber ?? "No tracking")</small></span>
+                    <span><span class="status-chip @shipment.Status.ToLowerInvariant().Replace(" ", "-")">@shipment.Status</span><small>@(shipment.Recipient ?? "No recipient")</small></span>
+                    <span aria-hidden="true">›</span>
+                </a>
+            }
+            @if (Model.Shipments.Count == 0) { <div class="empty-state compact"><p>No matching shipments.</p></div> }
+        </section>
+    </div>
+}

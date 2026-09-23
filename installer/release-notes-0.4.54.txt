@@ -1,0 +1,4 @@
+Northstar Desk 0.4.54
+
+- Includes Northstar Endpoint Agent 0.1.18 with a valid multi-size Northstar tray icon.
+- Windows can now load the dedicated icon instead of falling back to the generic application icon.

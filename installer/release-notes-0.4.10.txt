@@ -1,0 +1,8 @@
+Northstar Desk 0.4.10
+
+- Adds durable, access-controlled live ticket chat and technician invitations.
+- Adds requester closure requests, Teams support sessions, and preserved ticket transcripts.
+- Fixes the PostgreSQL 0.4.8 upgrade migration used by the server installer.
+- Adds a regression gate for the real 0020-to-current PostgreSQL upgrade path.
+
+Do not install version 0.4.9. Version 0.4.10 supersedes it.

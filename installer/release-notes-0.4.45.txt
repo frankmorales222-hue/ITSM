@@ -1,0 +1,3 @@
+Northstar Desk 0.4.45
+
+- Web-created tickets now include requester email, domain, and organization in routing facts, so domain-based routing rules work for portal submissions as well as inbound email.

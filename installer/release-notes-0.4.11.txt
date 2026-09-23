@@ -1,0 +1,7 @@
+Northstar Desk 0.4.11
+
+- Fixes in-place upgrades of populated production databases.
+- Preserves all existing users and prevents upgrade startup from attempting a new production seed.
+- Includes the corrected PostgreSQL chat migration from 0.4.10.
+
+Do not install versions 0.4.9 or 0.4.10. Version 0.4.11 supersedes them.

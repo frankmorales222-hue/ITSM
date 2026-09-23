@@ -1,0 +1,9 @@
+Northstar Desk 0.4.41
+
+- Added tenant-safe Smart Self-Service using administrator-approved troubleshooting articles.
+- Added configurable confidence, safety exclusions, technician-suggestion mode, and approved automatic delivery.
+- Added requester outcomes for fixed, not fixed, and live-help escalation while preserving the ticket timeline.
+- Added knowledge article draft, review, publishing, version history, usage metrics, and audit events.
+- Added Smart Self-Service controls in Help Desk Settings and suggestion status on Ticket Detail.
+- Restricted ticket message visibility by role so requester views cannot expose internal or restricted notes.
+- Smart Self-Service is disabled by default and does not change existing ticket handling until an administrator enables it.
