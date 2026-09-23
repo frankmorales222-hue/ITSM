@@ -391,7 +391,7 @@ class EndpointAgent(OrganizationMixin, Base, TimestampMixin):
 
 
 class EndpointAction(OrganizationMixin, Base, TimestampMixin):
-    """Audited, requester-approved remediation dispatched to an endpoint agent."""
+    """Audited remediation dispatched to an endpoint agent."""
     __tablename__ = "endpoint_actions"
     __table_args__ = (
         Index("ix_endpoint_actions_agent_status", "agent_id", "status"),
@@ -406,7 +406,11 @@ class EndpointAction(OrganizationMixin, Base, TimestampMixin):
     requested_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    auto_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_approval_reason: Mapped[str] = mapped_column(String(255), default="")
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     result_summary: Mapped[str] = mapped_column(String(500), default="")
     agent: Mapped[EndpointAgent] = relationship()

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import base64
 from pathlib import Path
 
@@ -189,12 +189,115 @@ def test_technician_requests_and_agent_runs_requester_approved_action(client):
     dispatched = client.get("/api/agent/actions/next", headers=auth)
     assert dispatched.status_code == 200, dispatched.text
     assert dispatched.json()["action"]["target"] == "EXCEL.EXE"
+    assert dispatched.json()["action"]["attempt"] == 1
+    with SessionLocal() as db:
+        fetched = db.get(EndpointAction, action_id)
+        assert fetched.status == "Approved"
+        assert fetched.retry_count == 1
+    retried = client.get("/api/agent/actions/next", headers=auth)
+    assert retried.json()["action"]["id"] == action_id
+    assert retried.json()["action"]["attempt"] == 2
     completed = client.post(f"/api/agent/actions/{action_id}/result", headers=auth, json={
         "succeeded": True, "summary": "Closed EXCEL.EXE.",
     })
     assert completed.status_code == 200, completed.text
+    duplicate_result = client.post(f"/api/agent/actions/{action_id}/result", headers=auth, json={
+        "succeeded": True, "summary": "Closed EXCEL.EXE.",
+    })
+    assert duplicate_result.status_code == 200
+    assert duplicate_result.json()["already_recorded"] is True
     with SessionLocal() as db:
         assert db.get(EndpointAction, action_id).status == "Completed"
+
+
+def test_staff_can_auto_approve_frozen_app_closure(client):
+    device_id = "9" * 64
+    csrf = login_as(client, "admin")
+    client.headers.update({"X-CSRF-Token": csrf})
+    token = client.post("/api/agent-admin/enrollment-tokens", json={"label": "Auto close"}).json()["enrollment_token"]
+    client.headers.pop("X-CSRF-Token")
+    enrolled = client.post("/api/agent/enroll", json={
+        "enrollment_token": token, "device_id": device_id, "hostname": "AUTO-CLOSE-PC",
+        "agent_version": "0.1.37", "schema_version": 1,
+    })
+    auth = {"Authorization": f"Bearer {enrolled.json()['credential']}"}
+    device_inventory = inventory(device_id=device_id, hostname="AUTO-CLOSE-PC", serial="AUTO-CLOSE-001")
+    assert client.put("/api/agent/inventory", json=device_inventory, headers=auth).status_code == 200
+    assert client.put("/api/agent/inventory", json=device_inventory, headers=auth).status_code == 200
+    with SessionLocal() as db:
+        requester = db.query(User).filter_by(username="user1").one()
+        ticket = db.query(Ticket).filter(Ticket.requester_id == requester.id,
+                                         Ticket.assigned_user_id.is_not(None)).first()
+        ticket_id = ticket.id
+    csrf = login_as(client, "user1")
+    client.headers.update({"X-CSRF-Token": csrf})
+    forbidden = client.post(f"/api/tickets/{ticket_id}/auto-close-application", json={
+        "action_type": "terminate_process", "target": "EXCEL.EXE",
+    })
+    assert forbidden.status_code == 404
+    csrf = login_as(client, "admin")
+    client.headers.update({"X-CSRF-Token": csrf})
+    created = client.post(f"/api/tickets/{ticket_id}/auto-close-application", json={
+        "action_type": "terminate_process", "target": "EXCEL.EXE",
+    })
+    assert created.status_code == 201, created.text
+    action = created.json()
+    assert action["status"] == "Approved"
+    assert action["auto_approved"] is True
+    assert action["auto_approval_reason"] == "frozen_app_auto_close"
+    client.headers.pop("X-CSRF-Token")
+    delivered = client.get("/api/agent/actions/next", headers=auth)
+    assert delivered.json()["action"]["id"] == action["id"]
+    assert client.post(f"/api/agent/actions/{action['id']}/result", headers=auth, json={
+        "succeeded": True, "summary": "Closed EXCEL.EXE.",
+    }).status_code == 200
+    csrf = login_as(client, "admin")
+    client.headers.update({"X-CSRF-Token": csrf})
+    detected = client.post(f"/api/tickets/{ticket_id}/auto-detect-and-close", json={
+        "detected_app": "WINWORD.EXE", "detection_confidence": 0.95,
+    })
+    assert detected.status_code == 201, detected.text
+    assert detected.json()["action"]["auto_approval_reason"] == "frozen_app_detection"
+    assert detected.json()["action"]["status"] == "Approved"
+
+
+def test_admin_recovers_and_eventually_fails_legacy_dispatched_actions(client):
+    with SessionLocal() as db:
+        requester = db.query(User).filter_by(username="user1").one()
+        admin = db.query(User).filter_by(username="admin").one()
+        agent = EndpointAgent(
+            organization_id=requester.organization_id, device_id="8" * 64,
+            credential_hash="7" * 64, hostname="STALE-PC", status="Online",
+        )
+        db.add(agent); db.flush()
+        ticket = db.query(Ticket).filter(Ticket.requester_id == requester.id).first()
+        item = EndpointAction(
+            organization_id=ticket.organization_id, agent_id=agent.id, ticket_id=ticket.id,
+            action_type="terminate_process", target="EXCEL.EXE", requested_by_id=admin.id,
+            status="Dispatched", approved_at=datetime.now(timezone.utc),
+            dispatched_at=datetime.now(timezone.utc) - timedelta(seconds=61), retry_count=1,
+        )
+        db.add(item); db.commit(); action_id = item.id
+    csrf = login_as(client, "admin")
+    client.headers.update({"X-CSRF-Token": csrf})
+    recovered = client.post("/api/admin/maintenance/recover-stale-actions")
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json() == {"recovered": 1, "failed": 0}
+    with SessionLocal() as db:
+        item = db.get(EndpointAction, action_id)
+        assert item.status == "Approved"
+        assert item.retry_count == 2
+        item.status = "Dispatched"
+        item.retry_count = 5
+        item.dispatched_at = datetime.now(timezone.utc) - timedelta(seconds=61)
+        db.commit()
+    failed = client.post("/api/admin/maintenance/recover-stale-actions")
+    assert failed.status_code == 200, failed.text
+    assert failed.json() == {"recovered": 0, "failed": 1}
+    with SessionLocal() as db:
+        item = db.get(EndpointAction, action_id)
+        assert item.status == "Failed"
+        assert "timed out after 5 attempts" in item.result_summary
 
 
 def test_agent_matches_employee_id_and_queues_unknown_identity_for_review(client):

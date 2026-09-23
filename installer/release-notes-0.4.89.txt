@@ -1,0 +1,11 @@
+Northstar Desk 0.4.89
+
+Endpoint action reliability update.
+
+- Hung application closure requests are automatically approved when a staff member starts them from an authorized ticket.
+- Approved endpoint actions remain available after an endpoint agent interruption and are retried safely up to five times.
+- Duplicate endpoint results are handled idempotently so ticket history is not duplicated.
+- Administrators can recover legacy endpoint actions left in the Dispatched state.
+- The endpoint action panel shows automatic approval and retry attempt information.
+
+This full server update includes the required database migration, updates the displayed application version, preserves existing configuration and data, creates a verified pre-upgrade backup, and restarts Northstar Desk and HTTPS.

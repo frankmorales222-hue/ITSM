@@ -180,6 +180,15 @@ class EndpointActionResult(BaseModel):
     summary: str = Field(min_length=1, max_length=500)
 
 
+class FrozenAppDetection(BaseModel):
+    detected_app: str = Field(min_length=1, max_length=160)
+    detection_confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+ENDPOINT_ACTION_MAX_ATTEMPTS = 5
+ENDPOINT_ACTION_STALE_SECONDS = 60
+
+
 _AGENT_INSTALLER_NAME = re.compile(r"NorthstarEndpointAgent-Setup-(\d+)\.(\d+)\.(\d+)\.exe$", re.I)
 _AGENT_RELEASE_MAX_BYTES = 150 * 1024 * 1024
 
@@ -316,6 +325,8 @@ def _action_dict(item: EndpointAction) -> dict:
             "action_type": item.action_type, "target": item.target, "status": item.status,
             "requested_by_id": item.requested_by_id, "approved_by_id": item.approved_by_id,
             "approved_at": item.approved_at, "dispatched_at": item.dispatched_at,
+            "auto_approved": item.auto_approved, "auto_approved_at": item.auto_approved_at,
+            "auto_approval_reason": item.auto_approval_reason, "retry_count": item.retry_count,
             "completed_at": item.completed_at, "result_summary": item.result_summary,
             "created_at": item.created_at}
 
@@ -327,6 +338,96 @@ def _valid_action_target(action_type: str, target: str) -> str:
         label = "executable name ending in .exe" if action_type == "terminate_process" else "Windows service name"
         raise HTTPException(422, f"Enter a valid {label}")
     return value
+
+
+def _staff_ticket_for_endpoint_action(db: Session, ticket_id: int, user: User) -> Ticket:
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket or user.role == Role.END_USER or (
+        user.id != ticket.assigned_user_id and user.role not in {Role.TEAM_LEAD, Role.MANAGER, Role.ADMIN}
+    ):
+        raise HTTPException(404, "Ticket not found")
+    if ticket.status in {TicketStatus.CLOSED, TicketStatus.CANCELLED}:
+        raise HTTPException(409, "Endpoint actions cannot be requested for a closed ticket")
+    return ticket
+
+
+def _pending_action(db: Session, ticket: Ticket, agent: EndpointAgent,
+                    action_type: str, target: str) -> EndpointAction | None:
+    return db.scalar(select(EndpointAction).where(
+        EndpointAction.ticket_id == ticket.id, EndpointAction.agent_id == agent.id,
+        EndpointAction.action_type == action_type, func.lower(EndpointAction.target) == target.lower(),
+        EndpointAction.status.in_(["Pending approval", "Approved", "Dispatched"])))
+
+
+def _create_auto_approved_action(db: Session, ticket: Ticket, agent: EndpointAgent, user: User,
+                                 target: str, reason: str, confidence: float | None = None) -> EndpointAction:
+    if _pending_action(db, ticket, agent, "terminate_process", target):
+        raise HTTPException(409, "An action for this application is already pending or executing")
+    approved_at = now()
+    item = EndpointAction(
+        agent_id=agent.id, ticket_id=ticket.id, action_type="terminate_process", target=target,
+        requested_by_id=user.id, status="Approved", approved_by_id=user.id, approved_at=approved_at,
+        auto_approved=True, auto_approved_at=approved_at, auto_approval_reason=reason,
+    )
+    db.add(item); db.flush()
+    confidence_text = f" Detection confidence: {confidence:.0%}." if confidence is not None else ""
+    db.add(TicketMessage(
+        ticket_id=ticket.id, author_id=user.id,
+        body=(f"[AUTO] {user.display_name} initiated automatic application closure for {target}. "
+              f"Reason: frozen application remediation; requester approval was not required.{confidence_text}"),
+        kind="internal", source="endpoint_action",
+    ))
+    db.add(TicketHistory(
+        ticket_id=ticket.id, event_type="endpoint_action_auto_approved", actor_id=user.id,
+        new_value={"action_id": item.id, "action_type": item.action_type, "target": target,
+                   "auto_approved": True, "reason": reason, "confidence": confidence},
+    ))
+    notify(db, ticket.requester_id, "endpoint.action_auto_approved",
+           f"[{ticket.number}] Frozen application remediation started",
+           f"IT initiated automatic closure of {target}. This action is recorded in the ticket.", ticket.id)
+    audit(db, "endpoint_action.auto_approved", "endpoint_action", item.id, user.id,
+          new={"ticket_id": ticket.id, "agent_id": agent.id, "action_type": item.action_type,
+               "target": target, "reason": reason, "confidence": confidence})
+    return item
+
+
+def _recover_stale_endpoint_actions(db: Session, actor_id: int | None = None,
+                                    agent_id: int | None = None) -> tuple[int, int]:
+    stale_threshold = now() - timedelta(seconds=ENDPOINT_ACTION_STALE_SECONDS)
+    stale_delivery = or_(
+        EndpointAction.status == "Dispatched",
+        (EndpointAction.status == "Approved") &
+        (EndpointAction.retry_count >= ENDPOINT_ACTION_MAX_ATTEMPTS),
+    )
+    conditions = [stale_delivery, EndpointAction.dispatched_at.is_not(None),
+                  EndpointAction.dispatched_at < stale_threshold]
+    if agent_id is not None:
+        conditions.append(EndpointAction.agent_id == agent_id)
+    stale_actions = db.scalars(select(EndpointAction).where(*conditions).with_for_update()).all()
+    recovered = failed = 0
+    for item in stale_actions:
+        if item.status == "Dispatched" and item.retry_count < ENDPOINT_ACTION_MAX_ATTEMPTS:
+            item.status = "Approved"
+            item.retry_count += 1
+            item.auto_approved_at = item.auto_approved_at or (now() if item.auto_approved else None)
+            audit(db, "endpoint_action.stale_retry", "endpoint_action", item.id, actor_id,
+                  new={"retry_count": item.retry_count, "ticket_id": item.ticket_id})
+            recovered += 1
+        else:
+            item.status = "Failed"
+            item.completed_at = now()
+            item.result_summary = (
+                f"Action timed out after {item.retry_count} attempts; the endpoint agent may be offline."
+            )
+            ticket = db.get(Ticket, item.ticket_id)
+            if ticket:
+                db.add(TicketMessage(ticket_id=ticket.id, author_id=None,
+                                     body=f"Endpoint action failed: {item.result_summary}",
+                                     kind="internal", source="endpoint_action"))
+            audit(db, "endpoint_action.stale_failed", "endpoint_action", item.id, actor_id,
+                  new={"retry_count": item.retry_count, "result_summary": item.result_summary})
+            failed += 1
+    return recovered, failed
 
 
 def _request_ip(request: Request) -> str:
@@ -743,22 +844,12 @@ def pending_endpoint_actions(user: User = Depends(current_user), db: Session = D
 @router.post("/tickets/{ticket_id}/endpoint-actions", status_code=201)
 def request_endpoint_action(ticket_id: int, payload: EndpointActionCreate,
                             user: User = Depends(current_user), db: Session = Depends(get_db)):
-    ticket = db.get(Ticket, ticket_id)
-    if not ticket or user.role == Role.END_USER or (
-        user.id != ticket.assigned_user_id and user.role not in {Role.TEAM_LEAD, Role.MANAGER, Role.ADMIN}
-    ):
-        raise HTTPException(404, "Ticket not found")
-    if ticket.status in {TicketStatus.CLOSED, TicketStatus.CANCELLED}:
-        raise HTTPException(409, "Endpoint actions cannot be requested for a closed ticket")
+    ticket = _staff_ticket_for_endpoint_action(db, ticket_id, user)
     agent = _ticket_agent(db, ticket)
     if not agent:
         raise HTTPException(409, "The requester does not have a reporting endpoint agent")
     target = _valid_action_target(payload.action_type, payload.target)
-    duplicate = db.scalar(select(EndpointAction).where(
-        EndpointAction.ticket_id == ticket.id, EndpointAction.agent_id == agent.id,
-        EndpointAction.action_type == payload.action_type, func.lower(EndpointAction.target) == target.lower(),
-        EndpointAction.status.in_(["Pending approval", "Approved", "Dispatched"])))
-    if duplicate:
+    if _pending_action(db, ticket, agent, payload.action_type, target):
         raise HTTPException(409, "This endpoint action is already pending")
     item = EndpointAction(agent_id=agent.id, ticket_id=ticket.id, action_type=payload.action_type,
                           target=target, requested_by_id=user.id, status="Pending approval")
@@ -777,6 +868,46 @@ def request_endpoint_action(ticket_id: int, payload: EndpointActionCreate,
           new={"ticket_id": ticket.id, "agent_id": agent.id, "action_type": payload.action_type, "target": target})
     db.commit(); db.refresh(item)
     return _action_dict(item)
+
+
+@router.post("/tickets/{ticket_id}/auto-close-application", status_code=201)
+def auto_close_application(ticket_id: int, payload: EndpointActionCreate,
+                           user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Create a staff-authorized frozen-application closure without requester approval."""
+    ticket = _staff_ticket_for_endpoint_action(db, ticket_id, user)
+    if payload.action_type != "terminate_process":
+        raise HTTPException(422, "Automatic closure supports terminate_process only")
+    agent = _ticket_agent(db, ticket)
+    if not agent:
+        raise HTTPException(409, "The requester does not have a reporting endpoint agent")
+    target = _valid_action_target("terminate_process", payload.target)
+    item = _create_auto_approved_action(db, ticket, agent, user, target, "frozen_app_auto_close")
+    db.commit(); db.refresh(item)
+    return _action_dict(item)
+
+
+@router.post("/tickets/{ticket_id}/auto-detect-and-close", status_code=201)
+def auto_detect_and_close_frozen_app(ticket_id: int, payload: FrozenAppDetection,
+                                     user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Record a trusted staff detection and queue a validated application closure."""
+    ticket = _staff_ticket_for_endpoint_action(db, ticket_id, user)
+    agent = _ticket_agent(db, ticket)
+    if not agent:
+        raise HTTPException(409, "The requester does not have a reporting endpoint agent")
+    target = _valid_action_target("terminate_process", payload.detected_app)
+    item = _create_auto_approved_action(
+        db, ticket, agent, user, target, "frozen_app_detection", payload.detection_confidence,
+    )
+    db.commit(); db.refresh(item)
+    return {"action": _action_dict(item), "message": "Frozen application closure initiated"}
+
+
+@router.post("/admin/maintenance/recover-stale-actions")
+def recover_stale_actions(user: User = Depends(require_roles(Role.ADMIN)), db: Session = Depends(get_db)):
+    """Recover legacy actions left in Dispatched or fail them after five attempts."""
+    recovered, failed = _recover_stale_endpoint_actions(db, actor_id=user.id)
+    db.commit()
+    return {"recovered": recovered, "failed": failed}
 
 
 @router.post("/tickets/{ticket_id}/endpoint-actions/{action_id}/approve")
@@ -817,24 +948,36 @@ def decline_endpoint_action(ticket_id: int, action_id: int, user: User = Depends
 
 @router.get("/agent/actions/next")
 def next_endpoint_action(agent: EndpointAgent = Depends(_agent_from_bearer), db: Session = Depends(get_db)):
+    # Self-heal actions orphaned by older agents that used Dispatched as a
+    # blocking state. New deliveries remain Approved until a result arrives.
+    _recover_stale_endpoint_actions(db, agent_id=agent.id)
     item = db.scalar(select(EndpointAction).where(
-        EndpointAction.agent_id == agent.id, EndpointAction.status == "Approved"
+        EndpointAction.agent_id == agent.id, EndpointAction.status == "Approved",
+        EndpointAction.retry_count < ENDPOINT_ACTION_MAX_ATTEMPTS,
     ).order_by(EndpointAction.approved_at).with_for_update(skip_locked=True))
     if not item:
+        db.commit()
         return {"action": None}
-    item.status = "Dispatched"; item.dispatched_at = now()
+    item.dispatched_at = now()
+    item.retry_count += 1
     audit(db, "endpoint_action.dispatched", "endpoint_action", item.id, None,
-          new={"ticket_id": item.ticket_id, "agent_id": agent.id, "action_type": item.action_type})
+          new={"ticket_id": item.ticket_id, "agent_id": agent.id, "action_type": item.action_type,
+               "attempt": item.retry_count})
     db.commit(); db.refresh(item)
-    return {"action": {"id": item.id, "action_type": item.action_type, "target": item.target}}
+    return {"action": {"id": item.id, "action_type": item.action_type,
+                       "target": item.target, "attempt": item.retry_count}}
 
 
 @router.post("/agent/actions/{action_id}/result")
 def endpoint_action_result(action_id: int, payload: EndpointActionResult,
                            agent: EndpointAgent = Depends(_agent_from_bearer), db: Session = Depends(get_db)):
     item = db.get(EndpointAction, action_id)
-    if not item or item.agent_id != agent.id or item.status != "Dispatched":
+    if not item or item.agent_id != agent.id:
         raise HTTPException(404, "Endpoint action not found")
+    if item.status in {"Completed", "Failed"}:
+        return {"ok": True, "status": item.status, "already_recorded": True}
+    if item.status not in {"Approved", "Dispatched"}:
+        raise HTTPException(409, "Endpoint action is not ready for a result")
     item.status = "Completed" if payload.succeeded else "Failed"
     item.completed_at = now(); item.result_summary = payload.summary.strip()
     ticket = db.get(Ticket, item.ticket_id)
