@@ -1,0 +1,1 @@
+Endpoint agents now repair their own installation, including PCs still running the older 32-bit agent. Automatic updates, Group Policy, or a silent manual install move them to the current version without a manual reinstall. Setup no longer fails because of the tray launcher, installation errors are reported with their real cause, and reinstalling after an uninstall works.

@@ -1,8 +1,9 @@
 param(
-    [string]$Version = "0.4.95",
+    [string]$Version = "0.4.96",
     [string]$MinimumCurrentVersion = "0.4.86",
     [string]$CodeSigningThumbprint = $env:NORTHSTAR_CODESIGN_THUMBPRINT,
-    [string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$TimestampUrl = "http://timestamp.digicert.com",
+    [switch]$AllowUnsigned
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,10 +37,10 @@ if ($CodeSigningThumbprint) {
         $_.Thumbprint.ToUpperInvariant() -eq $normalizedThumbprint
     })
 }
-if ($codeSigningCertificates.Count -ne 1) {
+if ($codeSigningCertificates.Count -ne 1 -and -not $AllowUnsigned) {
     throw "Exactly one valid CurrentUser code-signing certificate is required. Set NORTHSTAR_CODESIGN_THUMBPRINT when more than one is installed."
 }
-$codeSigningCertificate = $codeSigningCertificates[0]
+$codeSigningCertificate = if ($codeSigningCertificates.Count -eq 1) { $codeSigningCertificates[0] } else { $null }
 
 $packageText = Get-Content -LiteralPath (Join-Path $projectRoot "backend\itsm\__init__.py") -Raw
 $packageMatch = [regex]::Match($packageText, '__version__\s*=\s*["'']([^"'']+)["'']')
@@ -73,23 +74,29 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Full server installer compilation failed." }
 
     $payload = Join-Path $installerRoot "artifacts\NorthstarDesk-Server-Setup-$Version.exe"
-    & $signTool sign /sha1 $codeSigningCertificate.Thumbprint /fd SHA256 `
-        /tr $TimestampUrl /td SHA256 /v $payload
-    if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed." }
-    & $signTool verify /pa /all /v $payload
-    if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed." }
-    if ((Get-AuthenticodeSignature -LiteralPath $payload).Status -ne "Valid") {
-        throw "The signed installer did not pass Windows Authenticode validation."
+    if ($codeSigningCertificate) {
+        & $signTool sign /sha1 $codeSigningCertificate.Thumbprint /fd SHA256 `
+            /tr $TimestampUrl /td SHA256 /v $payload
+        if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed." }
+    }
+    if (-not $AllowUnsigned) {
+        & $signTool verify /pa /all /v $payload
+        if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed." }
+        if ((Get-AuthenticodeSignature -LiteralPath $payload).Status -ne "Valid") {
+            throw "The signed installer did not pass Windows Authenticode validation."
+        }
     }
 
     $privateKey = Join-Path $installerRoot "signing\private\northstar.update-private.pem"
     $passwordFile = Join-Path $installerRoot "signing\private\northstar.update-private.password.txt"
     $output = Join-Path $installerRoot "artifacts\NorthstarDesk-$Version.nsupdate"
 
-    & $python (Join-Path $installerRoot "update-package.py") build `
-        --private-key $privateKey --password-file $passwordFile --payload $payload `
-        --version $Version --publisher "Northstar" --release-notes-file $notes `
-        --minimum-current-version $MinimumCurrentVersion --output $output
+    $packageArguments = @((Join-Path $installerRoot "update-package.py"), "build",
+        "--private-key", $privateKey, "--password-file", $passwordFile, "--payload", $payload,
+        "--version", $Version, "--publisher", "Northstar", "--release-notes-file", $notes,
+        "--minimum-current-version", $MinimumCurrentVersion, "--output", $output)
+    if ($AllowUnsigned) { $packageArguments += "--allow-unsigned" }
+    & $python @packageArguments
     if ($LASTEXITCODE -ne 0) { throw "Signed full server update package build failed." }
 
     $deliverables = Join-Path $projectRoot "deliverables"

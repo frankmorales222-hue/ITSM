@@ -387,6 +387,8 @@ class EndpointAgent(OrganizationMixin, Base, TimestampMixin):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_ip: Mapped[str] = mapped_column(String(80), default="")
     last_error: Mapped[str] = mapped_column(String(500), default="")
+    update_state: Mapped[dict] = mapped_column(JSON, default=dict)
+    self_repair_state: Mapped[dict] = mapped_column(JSON, default=dict)
     asset: Mapped[Asset | None] = relationship()
 
 

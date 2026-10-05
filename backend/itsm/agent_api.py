@@ -32,7 +32,7 @@ from .security import STAFF_ROLES, current_user, get_current_session, require_ro
 from .services import audit, notify
 
 router = APIRouter(prefix="/api")
-CURRENT_ENDPOINT_AGENT_VERSION = "0.1.42"
+CURRENT_ENDPOINT_AGENT_VERSION = "0.1.43"
 AGENT_CHECK_IN_GRACE = timedelta(minutes=5)
 
 
@@ -166,6 +166,8 @@ class AgentHeartbeatIn(BaseModel):
     observed_user_email: str | None = Field(default=None, max_length=255)
     observed_user: dict[str, Any] = Field(default_factory=dict)
     last_error: str = Field(default="", max_length=500)
+    update_state: dict[str, Any] = Field(default_factory=dict)
+    self_repair: dict[str, Any] = Field(default_factory=dict)
 
 
 class InventoryIn(BaseModel):
@@ -786,7 +788,7 @@ setlocal
 set "NS_EXE=%TEMP%\\NorthstarEndpointAgent-Setup.exe"
 set "NS_LOG=%LOCALAPPDATA%\\NorthstarEndpointAgent\\installer.log"
 echo Northstar Endpoint Agent setup is starting...
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $logDir=Split-Path -Parent $env:NS_LOG; New-Item -ItemType Directory -Force -Path $logDir | Out-Null; try {{ Invoke-WebRequest -UseBasicParsing -Uri '{exe_url}' -OutFile $env:NS_EXE }} catch {{ Add-Content -LiteralPath $env:NS_LOG -Value ('Trusted download failed; using the enrollment certificate channel: ' + $_.Exception.Message); curl.exe --fail --location --insecure --output $env:NS_EXE '{exe_url}' }}; if (-not (Test-Path $env:NS_EXE)) {{ throw 'Unable to download the endpoint agent.' }}; $actual=(Get-FileHash -LiteralPath $env:NS_EXE -Algorithm SHA256).Hash.ToLowerInvariant(); if ($actual -ne '{expected_sha256}') {{ Remove-Item -LiteralPath $env:NS_EXE -Force -ErrorAction SilentlyContinue; throw 'The downloaded endpoint installer failed integrity verification.' }}; Add-Content -LiteralPath $env:NS_LOG -Value ('Downloaded and verified installer at ' + (Get-Date -Format o)); $args=@('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=\"' + $env:NS_LOG + '\"'),('/ENROLLMENTCODE=\"{code}\"')); $setup=Start-Process -FilePath $env:NS_EXE -Verb RunAs -Wait -PassThru -ArgumentList $args; Add-Content -LiteralPath $env:NS_LOG -Value ('Installer exit code: ' + $setup.ExitCode); if ($setup.ExitCode -ne 0) {{ throw ('Endpoint agent setup failed with exit code ' + $setup.ExitCode + '. Log: ' + $env:NS_LOG) }}; $configureError=Join-Path $env:ProgramData 'NorthstarEndpointAgent-install-error.log'; if (Test-Path -LiteralPath $configureError) {{ throw ('Northstar was installed, but enrollment failed. Diagnostic: ' + $configureError) }}; Write-Host 'Northstar Endpoint Agent installed and enrolled successfully.' -ForegroundColor Green"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $logDir=Split-Path -Parent $env:NS_LOG; New-Item -ItemType Directory -Force -Path $logDir | Out-Null; try {{ Invoke-WebRequest -UseBasicParsing -Uri '{exe_url}' -OutFile $env:NS_EXE }} catch {{ Add-Content -LiteralPath $env:NS_LOG -Value ('Trusted download failed; using the enrollment certificate channel: ' + $_.Exception.Message); curl.exe --fail --location --insecure --output $env:NS_EXE '{exe_url}' }}; if (-not (Test-Path $env:NS_EXE)) {{ throw 'Unable to download the endpoint agent.' }}; $actual=(Get-FileHash -LiteralPath $env:NS_EXE -Algorithm SHA256).Hash.ToLowerInvariant(); if ($actual -ne '{expected_sha256}') {{ Remove-Item -LiteralPath $env:NS_EXE -Force -ErrorAction SilentlyContinue; throw 'The downloaded endpoint installer failed integrity verification.' }}; Add-Content -LiteralPath $env:NS_LOG -Value ('Downloaded and verified installer at ' + (Get-Date -Format o)); $args=@('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG=\"' + $env:NS_LOG + '\"'),('/ENROLLMENTCODE=\"{code}\"')); $setup=Start-Process -FilePath $env:NS_EXE -Verb RunAs -Wait -PassThru -ArgumentList $args; Add-Content -LiteralPath $env:NS_LOG -Value ('Installer exit code: ' + $setup.ExitCode); $configureError=Join-Path $env:ProgramData 'NorthstarEndpointAgent-install-error.log'; $configureWarning=Join-Path $env:ProgramData 'NorthstarEndpointAgent-install-warning.log'; if ($setup.ExitCode -ne 0 -or (Test-Path -LiteralPath $configureError)) {{ if (Test-Path -LiteralPath $configureError) {{ Write-Host 'Installer error details:' -ForegroundColor Red; Get-Content -LiteralPath $configureError | Write-Host }}; if (Test-Path -LiteralPath $configureWarning) {{ Write-Host 'Installer warnings:' -ForegroundColor Yellow; Get-Content -LiteralPath $configureWarning | Write-Host }}; throw ('Endpoint agent setup failed with exit code ' + $setup.ExitCode + '.') }}; if (Test-Path -LiteralPath $configureWarning) {{ Write-Host 'Installer warnings:' -ForegroundColor Yellow; Get-Content -LiteralPath $configureWarning | Write-Host }}; Write-Host 'Northstar Endpoint Agent installed and enrolled successfully.' -ForegroundColor Green"
 if errorlevel 1 (
   echo.
   echo Installation failed. Diagnostic log:
@@ -1038,6 +1040,8 @@ def agent_heartbeat(payload: AgentHeartbeatIn, request: Request, agent: Endpoint
         agent.hostname = payload.hostname
     if payload.agent_version:
         agent.agent_version = payload.agent_version
+    agent.update_state = dict(payload.update_state or {})
+    agent.self_repair_state = dict(payload.self_repair or {})
     raw_claims = dict(payload.observed_user or {})
     if payload.observed_user_email and not raw_claims.get("email"):
         raw_claims["email"] = payload.observed_user_email
@@ -1232,11 +1236,12 @@ def list_agents(user: User = Depends(require_roles(Role.ADMIN, Role.MANAGER)), d
     rows = db.scalars(select(EndpointAgent).order_by(EndpointAgent.last_seen_at.desc())).all()
     return [{"id": item.id, "asset_id": item.asset_id, "device_id_suffix": item.device_id[-8:],
              "hostname": item.hostname, **_agent_release_state(item), "schema_version": item.schema_version,
-             "status": "Revoked" if item.revoked_at else item.status, "last_seen_at": item.last_seen_at,
+             "status": "Revoked" if item.revoked_at else ("Not reporting" if _agent_release_state(item)["check_in_overdue"] else item.status), "last_seen_at": item.last_seen_at,
              "last_inventory_at": item.last_inventory_at, "observed_user_email": item.observed_user_email,
              "observed_user": item.observed_user, "assignment_state": item.assignment_state,
              "identity_match_method": item.identity_match_method,
-             "matched_employee_id": item.matched_employee_id, "last_error": item.last_error} for item in rows]
+             "matched_employee_id": item.matched_employee_id, "last_error": item.last_error,
+             "update_state": item.update_state or {}, "self_repair": item.self_repair_state or {}} for item in rows]
 
 
 @router.get("/agent-admin/assignment-review")

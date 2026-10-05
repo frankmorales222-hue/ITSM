@@ -1,5 +1,7 @@
 import json
+import hashlib
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -311,6 +313,62 @@ def test_action_scheduler_runs_while_inventory_is_blocked_and_times_out():
         scheduler.stop()
 
 
+def test_self_repair_scheduler_runs_while_inventory_is_blocked():
+    inventory_started = threading.Event()
+    release_inventory = threading.Event()
+    repaired = threading.Event()
+
+    def blocked_inventory():
+        inventory_started.set()
+        release_inventory.wait(5)
+
+    scheduler = Scheduler(
+        blocked_inventory, lambda: None, full_interval=300, heartbeat_interval=15,
+        maintenance_action=repaired.set, maintenance_interval=3600,
+    )
+    scheduler.start()
+    try:
+        assert inventory_started.wait(1)
+        assert repaired.wait(1)
+    finally:
+        release_inventory.set()
+        scheduler.stop()
+
+
+def test_update_retry_waits_24_hours_but_newer_version_runs(tmp_path, monkeypatch):
+    payload = b"northstar update"
+    digest = hashlib.sha256(payload).hexdigest()
+
+    class Transport:
+        def __init__(self):
+            self.downloads = []
+        def download(self, path, _credential, destination):
+            self.downloads.append(path)
+            destination.write_bytes(payload)
+
+    agent = Agent.__new__(Agent)
+    agent.data_dir = tmp_path
+    agent.config = type("Config", (), {"credential": "secret"})()
+    agent.transport = Transport()
+    agent.logger = __import__("logging").getLogger("update-retry-test")
+    state_dir = tmp_path / "updates"
+    state_dir.mkdir()
+    (state_dir / "update-state.json").write_text(json.dumps({
+        "version": "0.1.44", "status": "failed", "attempted_at": datetime.now(timezone.utc).isoformat(),
+    }), encoding="utf-8")
+    launches = []
+    monkeypatch.setattr("asset_agent.agent.subprocess.Popen", lambda *args, **kwargs: launches.append(args))
+
+    agent.schedule_agent_update({"version": "0.1.44", "sha256": digest,
+                                 "download_path": "/api/agent/update/download"})
+    assert agent.transport.downloads == []
+
+    agent.schedule_agent_update({"version": "0.1.45", "sha256": digest,
+                                 "download_path": "/api/agent/update/download"})
+    assert agent.transport.downloads == ["/api/agent/update/download"]
+    assert len(launches) == 1
+
+
 def test_agent_waits_for_service_to_stop_before_restart(monkeypatch):
     class Transport:
         def __init__(self):
@@ -353,7 +411,7 @@ def test_system_install_relaunches_tray_through_users_group_task():
     assert "restartreplace" not in tray_file_line.lower()
     assert "runasoriginaluser" not in installer.lower()
     assert 'install-tray-launcher-task.ps1' in installer
-    assert '/Run /TN ""Northstar Endpoint Tray Launcher""' in installer
+    assert '/Run /TN "Northstar Endpoint Tray Launcher"' in installer
 
     assert "<GroupId>S-1-5-32-545</GroupId>" in task_installer
     assert "<RunLevel>LeastPrivilege</RunLevel>" in task_installer
@@ -367,6 +425,9 @@ def test_system_install_relaunches_tray_through_users_group_task():
     assert 'install-tray-launcher-task.ps1' in enterprise_builder
     assert 'migrate-legacy-x86-install.ps1' in installer
     assert 'migrate-legacy-x86-install.ps1' in enterprise_builder
+    assert 'repair-agent-install.ps1' in enterprise_builder
+    assert '/End /TN $taskNames[0]' in migration
+    assert 'StartsWith($legacyRoot' in migration
     assert 'Northstar Endpoint Agent - User Logon Inventory' in migration
     assert '$exec.Command = $targetExecutable' in migration
     assert 'Copy-Item -LiteralPath $legacyTrayConfig' in migration
@@ -377,17 +438,17 @@ def test_system_install_relaunches_tray_through_users_group_task():
     assert 'ProgramData' not in migration
 
 
-def test_agent_0142_release_metadata_is_aligned():
+def test_agent_0143_release_metadata_is_aligned():
     root = Path(__file__).resolve().parents[1]
-    assert '__version__ = "0.1.42"' in (root /
+    assert '__version__ = "0.1.43"' in (root /
         "asset_agent/__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.1.42"' in (root /
+    assert 'version = "0.1.43"' in (root /
         "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.1.42"' in (root /
+    assert '#define MyAppVersion "0.1.43"' in (root /
         "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
-    notes = (root / "release-notes-0.1.42.txt").read_text(encoding="utf-8")
-    assert "exactly one" in notes and "Access is denied" in notes
+    notes = (root / "release-notes-0.1.43.txt").read_text(encoding="utf-8")
+    assert "repair their own installation" in notes and "32-bit agent" in notes
     server_installer = (root.parent / "installer/NorthstarDeskServer.iss").read_text(encoding="utf-8")
     server_builder = (root.parent / "installer/build-full-server-update.ps1").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.4.95"' in server_installer
-    assert '[string]$Version = "0.4.95"' in server_builder
+    assert '#define MyAppVersion "0.4.96"' in server_installer
+    assert '[string]$Version = "0.4.96"' in server_builder

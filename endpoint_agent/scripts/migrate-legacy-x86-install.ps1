@@ -2,10 +2,17 @@
 param(
     [string]$InstallRoot = "$env:ProgramFiles\Northstar Endpoint Agent",
     [string]$LegacyInstallRoot = "${env:ProgramFiles(x86)}\Northstar Endpoint Agent",
-    [int]$StartupTimeoutSeconds = 30
+    [int]$StartupTimeoutSeconds = 30,
+    [string]$ErrorLog = ""
 )
 
 $ErrorActionPreference = "Stop"
+trap {
+    $details = ($_ | Out-String).Trim()
+    if ($ErrorLog) { Add-Content -LiteralPath $ErrorLog -Value $details -Encoding UTF8 }
+    Write-Error $details
+    exit 1
+}
 $taskNames = @("Northstar Endpoint Agent", "Northstar Endpoint Agent - User Logon Inventory")
 $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
 $targetExecutable = [IO.Path]::GetFullPath((Join-Path $InstallRoot "NorthstarEndpointAgent.exe"))
@@ -61,11 +68,39 @@ if (-not (Test-Path -LiteralPath $newTrayConfig) -and (Test-Path -LiteralPath $l
 }
 
 $repointed = $false
+$primaryTaskExists = $null -ne (Get-NorthstarTaskXml -Name $taskNames[0])
 foreach ($taskName in $taskNames) {
     if (Set-NorthstarTaskExecutable -Name $taskName) { $repointed = $true }
 }
 
-if ($repointed -or (Test-Path -LiteralPath $legacyRoot)) {
+if ($repointed -or ((Test-Path -LiteralPath $legacyRoot) -and $primaryTaskExists)) {
+    # MultipleInstances=IgnoreNew means starting the corrected task while the
+    # legacy instance is alive silently leaves the old executable in charge.
+    # End the task and stop only processes whose executable is under the
+    # validated legacy installation root before starting the corrected task.
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $schtasks /End /TN $taskNames[0] *> $null
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    Get-CimInstance Win32_Process -Filter "Name='NorthstarEndpointAgent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.ExecutablePath -and
+            ([IO.Path]::GetFullPath($_.ExecutablePath).StartsWith($legacyRoot + '\', [StringComparison]::OrdinalIgnoreCase))
+        } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    $stopDeadline = (Get-Date).AddSeconds(15)
+    do {
+        $legacyRunning = @(Get-CimInstance Win32_Process -Filter "Name='NorthstarEndpointAgent.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.ExecutablePath -and
+                ([IO.Path]::GetFullPath($_.ExecutablePath).StartsWith($legacyRoot + '\', [StringComparison]::OrdinalIgnoreCase))
+            }).Count -gt 0
+        if ($legacyRunning) { Start-Sleep -Milliseconds 500 }
+    } while ($legacyRunning -and (Get-Date) -lt $stopDeadline)
+    if ($legacyRunning) { throw "The legacy x86 Northstar Endpoint Agent process could not be stopped." }
+
     & $schtasks /Run /TN $taskNames[0] | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "The migrated Northstar Endpoint Agent task could not be started." }
     $deadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)

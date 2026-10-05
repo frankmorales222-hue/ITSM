@@ -112,7 +112,7 @@ def test_agent_rejects_wrong_device_and_revocation(client):
     assert devices.status_code == 200
     agent = next(item for item in devices.json() if item["device_id_suffix"] == DEVICE_ID[-8:])
     assert agent["agent_version"] == "0.1.0"
-    assert agent["current_agent_version"] == "0.1.42"
+    assert agent["current_agent_version"] == "0.1.43"
     assert agent["is_outdated"] is True
     assert agent["check_in_overdue"] is False
     assert agent["last_seen_at"]
@@ -149,6 +149,52 @@ def test_agent_heartbeat_delivers_ticket_events_and_active_announcements(client,
     alerts = heartbeat.json()["alerts"]
     assert any(item["id"].startswith("notification-") and item["severity"] == "information" for item in alerts)
     assert any(item["id"].startswith("announcement-") and item["severity"] == "warning" for item in alerts)
+
+
+def test_agent_heartbeat_stores_update_and_self_repair_state(client, monkeypatch):
+    monkeypatch.setattr("itsm.agent_api._self_service_installer", lambda: None)
+    csrf = login_as(client, "admin")
+    client.headers.update({"X-CSRF-Token": csrf})
+    token = client.post("/api/agent-admin/enrollment-tokens", json={"label": "Health state"}).json()["enrollment_token"]
+    client.headers.pop("X-CSRF-Token")
+    enrolled = client.post("/api/agent/enroll", json={
+        "enrollment_token": token, "device_id": "a" * 64, "hostname": "REPAIR-PC",
+        "agent_version": "0.1.43", "schema_version": 1,
+    })
+    auth = {"Authorization": f"Bearer {enrolled.json()['credential']}"}
+    response = client.post("/api/agent/heartbeat", headers=auth, json={
+        "hostname": "REPAIR-PC",
+        "update_state": {"version": "0.1.43", "status": "scheduled", "attempted_at": "2026-10-05T12:00:00Z"},
+        "self_repair": {"status": "Repaired", "changed": ["Repaired scheduled task"]},
+    })
+    assert response.status_code == 200, response.text
+    csrf = login_as(client, "admin")
+    client.headers.update({"X-CSRF-Token": csrf})
+    device = next(item for item in client.get("/api/agent-admin/devices").json() if item["hostname"] == "REPAIR-PC")
+    assert device["update_state"]["status"] == "scheduled"
+    assert device["self_repair"]["status"] == "Repaired"
+
+
+def test_agent_list_reports_overdue_agent_as_not_reporting(client):
+    csrf = login_as(client, "admin")
+    client.headers.update({"X-CSRF-Token": csrf})
+    token = client.post("/api/agent-admin/enrollment-tokens", json={"label": "Overdue state"}).json()["enrollment_token"]
+    client.headers.pop("X-CSRF-Token")
+    enrolled = client.post("/api/agent/enroll", json={
+        "enrollment_token": token, "device_id": "6" * 64, "hostname": "OFFLINE-PC",
+        "agent_version": "0.1.42", "schema_version": 1,
+    })
+    assert enrolled.status_code == 201
+    with SessionLocal() as db:
+        agent = db.query(EndpointAgent).filter_by(device_id="6" * 64).one()
+        agent.last_seen_at = datetime.now(timezone.utc) - timedelta(minutes=6)
+        agent.status = "Online"
+        db.commit()
+    csrf = login_as(client, "admin")
+    client.headers.update({"X-CSRF-Token": csrf})
+    device = next(item for item in client.get("/api/agent-admin/devices").json() if item["hostname"] == "OFFLINE-PC")
+    assert device["status"] == "Not reporting"
+    assert device["is_outdated"] is True
 
 
 def test_technician_requests_and_agent_runs_requester_approved_action(client):

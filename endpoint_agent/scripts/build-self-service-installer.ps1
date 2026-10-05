@@ -15,6 +15,11 @@ if ($LASTEXITCODE -ne 0) { throw "Self-service endpoint installer compilation fa
 $version = (Select-String -LiteralPath (Join-Path $agentRoot "asset_agent\__init__.py") -Pattern '__version__\s*=\s*"([0-9.]+)"').Matches[0].Groups[1].Value
 $setup = Join-Path $agentRoot ("artifacts\NorthstarEndpointAgent-Setup-" + $version + ".exe")
 if (-not (Test-Path -LiteralPath $setup)) { throw "Expected endpoint installer was not produced: $setup" }
+if ($CertificateThumbprint) {
+    $certificate = Get-Item "Cert:\CurrentUser\My\$CertificateThumbprint"
+    $signature = Set-AuthenticodeSignature -FilePath $setup -Certificate $certificate -TimestampServer "http://timestamp.digicert.com"
+    if ($signature.Status -ne "Valid") { throw "Endpoint installer signing failed: $($signature.StatusMessage)" }
+}
 $hash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash
 Set-Content -LiteralPath "$setup.sha256" -Value "$hash  $(Split-Path -Leaf $setup)" -Encoding ascii
 Write-Host "Self-service endpoint installer created: $setup"

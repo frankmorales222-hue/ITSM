@@ -13,11 +13,7 @@ $configPath = Join-Path $dataRoot "config.json"
 $enrollmentToken = ""
 $tlsCertificateSha256 = ""
 $rootCertificateBytes = $null
-if (Test-Path -LiteralPath $configPath) {
-    try { $serverUrl = [string]((Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json).server_url) }
-    catch { throw "The existing agent configuration could not be read. Repair the installation as an administrator." }
-    if (-not $serverUrl) { throw "The existing agent configuration does not contain the Help Desk address." }
-} else {
+if ($EnrollmentCode.Trim()) {
     $parts = $EnrollmentCode.Trim().Split('.')
     if (($parts.Count -lt 2 -or $parts.Count -gt 4) -or -not $parts[0] -or -not $parts[1]) {
         throw "The enrollment code is invalid. Generate a new code from Northstar Desk."
@@ -43,6 +39,12 @@ if (Test-Path -LiteralPath $configPath) {
         finally { $sha256.Dispose() }
         if ($actualRootSha256 -ne $expectedRootSha256) { throw "The enrollment CA certificate failed integrity verification." }
     }
+} elseif (Test-Path -LiteralPath $configPath) {
+    try { $serverUrl = [string]((Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json).server_url) }
+    catch { throw "The existing agent configuration could not be read. Repair the installation as an administrator." }
+    if (-not $serverUrl) { throw "The existing agent configuration does not contain the Help Desk address." }
+} else {
+    throw "This computer is not enrolled. Supply an enrollment code from Northstar Desk."
 }
 if ($serverUrl -notmatch '^https://' -and $serverUrl -notmatch '^http://(localhost|127\.0\.0\.1)(:\d+)?/?$') {
     throw "The enrollment server must use HTTPS. HTTP is allowed only for local testing."

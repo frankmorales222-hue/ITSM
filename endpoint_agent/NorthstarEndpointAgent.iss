@@ -1,5 +1,5 @@
 #define MyAppName "Northstar Endpoint Agent"
-#define MyAppVersion "0.1.42"
+#define MyAppVersion "0.1.43"
 
 [Setup]
 AppId={{6894E363-B668-4F80-9318-405974E3CE20}
@@ -30,6 +30,7 @@ Source: "scripts\install-self-service.ps1"; DestDir: "{app}"; Flags: ignoreversi
 Source: "scripts\launch-tray.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\install-tray-launcher-task.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\migrate-legacy-x86-install.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "scripts\repair-agent-install.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\stop-agent-for-upgrade.ps1"; Flags: dontcopy
 
 [Icons]
@@ -38,9 +39,6 @@ Source: "scripts\stop-agent-for-upgrade.ps1"; Flags: dontcopy
 ; only the per-user notification-area companion and is deliberately guarded by
 ; the launcher's per-session mutex.
 Name: "{commonstartup}\Northstar Endpoint Agent"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\launch-tray.ps1"""; WorkingDir: "{app}"
-
-[Run]
-Filename: "{sys}\schtasks.exe"; Parameters: "/Run /TN ""Northstar Endpoint Tray Launcher"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\uninstall-enterprise.ps1"" -KeepInstallFiles"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveNorthstarAgentTasks"
@@ -73,7 +71,10 @@ end;
 
 procedure InitializeWizard;
 begin
-  AutoUpdateMode := ExpandConstant('{param:AUTOUPDATE|0}') = '1';
+  { The agent intentionally launches Setup with a bare /AUTOUPDATE switch;
+    deployment tools may use /AUTOUPDATE=1. Silent setup is never allowed to
+    trigger a second elevation prompt. }
+  AutoUpdateMode := (Pos('/AUTOUPDATE', Uppercase(GetCmdTail)) > 0) or WizardSilent;
   EnrollmentPage := CreateInputQueryPage(wpWelcome,
     'Connect this computer',
     'Paste the enrollment code from Northstar Desk',
@@ -137,31 +138,24 @@ var
   Parameters: String;
   ErrorDetails: AnsiString;
   ErrorLog: String;
+  WarningLog: String;
 begin
   if CurStep = ssPostInstall then
   begin
-    Parameters := '-NoProfile -ExecutionPolicy Bypass -File ' +
-      AddQuotes(ExpandConstant('{app}\install-tray-launcher-task.ps1'));
-    WizardForm.StatusLabel.Caption := 'Registering the interactive tray launcher...';
-    if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
-      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
-      RaiseException('Northstar could not register the interactive tray launcher task.');
+    ErrorLog := ExpandConstant('{commonappdata}\NorthstarEndpointAgent-install-error.log');
+    WarningLog := ExpandConstant('{commonappdata}\NorthstarEndpointAgent-install-warning.log');
+    DeleteFile(ErrorLog);
+    DeleteFile(WarningLog);
 
     Parameters := '-NoProfile -ExecutionPolicy Bypass -File ' +
       AddQuotes(ExpandConstant('{app}\migrate-legacy-x86-install.ps1')) + ' -InstallRoot ' +
-      AddQuotes(ExpandConstant('{app}'));
+      AddQuotes(ExpandConstant('{app}')) + ' -ErrorLog ' + AddQuotes(ErrorLog);
     WizardForm.StatusLabel.Caption := 'Migrating any legacy 32-bit endpoint agent installation...';
     if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
       ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
-      RaiseException('Northstar could not safely migrate the legacy 32-bit endpoint agent installation.');
-
-    { A normal update must never read, recreate, or re-enroll the protected
-      machine configuration.  Replace only the binaries and restart the task
-      already associated with the enrolled endpoint. }
-    if ExistingAgentConfiguration() and ExistingAgentTask() then
     begin
-      WizardForm.StatusLabel.Caption := 'Updating the existing Northstar Endpoint Agent...';
-      StartExistingAgentTask;
+      SaveStringToFile(ErrorLog, #13#10 + 'Legacy migration failed with exit code ' + IntToStr(ResultCode) + '.', True);
+      ConfigurationFailed := True;
       InstallFinalized := True;
       exit;
     end;
@@ -170,15 +164,9 @@ begin
       AddQuotes(ExpandConstant('{app}\install-self-service.ps1')) + ' -EnrollmentCode ' +
       AddQuotes(Trim(EnrollmentPage.Values[0]));
     WizardForm.StatusLabel.Caption := 'Enrolling this computer and uploading its first inventory...';
-    { Explicitly request the elevated token. Some browser-launched repair sessions
-      reported an administrator setup process but started child PowerShell with a
-      filtered token, which cannot read the machine-protected agent configuration. }
-    if ((AutoUpdateMode and ((not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
-      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0))) or
-      ((not AutoUpdateMode) and ((not ShellExec('runas', ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
-      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0)))) then
+    if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
     begin
-      ErrorLog := ExpandConstant('{commonappdata}\NorthstarEndpointAgent-install-error.log');
       ConfigurationFailed := True;
       { Do not raise an exception here. Inno rolls back every installed file
         when a Code event raises, which previously left an empty Program Files
@@ -193,8 +181,30 @@ begin
           MsgBox('Northstar was installed, but connection setup failed. Diagnostic: ' + ErrorLog, mbError, MB_OK);
       end;
     end;
+    if not ConfigurationFailed then
+    begin
+      Parameters := '-NoProfile -ExecutionPolicy Bypass -File ' +
+        AddQuotes(ExpandConstant('{app}\install-tray-launcher-task.ps1')) + ' -InstallRoot ' +
+        AddQuotes(ExpandConstant('{app}'));
+      WizardForm.StatusLabel.Caption := 'Starting the interactive tray...';
+      if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
+        ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+        SaveStringToFile(WarningLog, 'The tray launcher task could not be registered (exit code ' + IntToStr(ResultCode) + ').', True)
+      else
+      begin
+        Exec(ExpandConstant('{sys}\schtasks.exe'), '/Run /TN "Northstar Endpoint Tray Launcher"',
+          ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        if ResultCode <> 0 then
+          SaveStringToFile(WarningLog, 'The tray launcher task was registered but could not be started (exit code ' + IntToStr(ResultCode) + ').', True);
+      end;
+    end;
     InstallFinalized := True;
   end;
+end;
+
+function GetCustomSetupExitCode(): Integer;
+begin
+  if ConfigurationFailed then Result := 1 else Result := 0;
 end;
 
 procedure DeinitializeSetup;

@@ -11,6 +11,7 @@ import time
 import sys
 import threading
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 
 from . import __version__
 from .config import AgentConfig, default_data_dir
@@ -98,15 +99,36 @@ class Agent:
         self.flush(strict=strict)
         return inventory
 
-    def heartbeat(self) -> None:
+    def _state_file(self, relative: str) -> dict:
+        try:
+            value = json.loads((self.data_dir / relative).read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def heartbeat(self, strict: bool = False, perform_actions: bool = True) -> None:
         if not self.config.credential:
             return
         try:
+            update_state = self._state_file("updates/update-state.json")
+            reported_update = self._version_tuple(update_state.get("version"))
+            current_version = self._version_tuple(__version__)
+            if (update_state.get("status") == "scheduled" and reported_update and current_version and
+                    reported_update <= current_version):
+                update_state["status"] = "installed"
+                update_state["completed_at"] = datetime.now(timezone.utc).isoformat()
+                try:
+                    (self.data_dir / "updates/update-state.json").write_text(
+                        json.dumps(update_state), encoding="utf-8")
+                except OSError:
+                    pass
             identity = collect_identity()
             claims = observed_user_claims(self.config.user_email_override)
             result = self.transport.heartbeat(self.config.credential, {"hostname": identity["hostname"],
                                      "agent_version": __version__, "observed_user_email": claims.get("email"),
-                                     "observed_user": claims})
+                                     "observed_user": claims,
+                                     "update_state": update_state,
+                                     "self_repair": self._state_file("self-repair-state.json")})
             alerts = result.get("alerts", []) if isinstance(result, dict) else []
             tray_signal_directory = self.data_dir / "tray"
             tray_signal_directory.mkdir(parents=True, exist_ok=True)
@@ -115,6 +137,10 @@ class Agent:
                 self.schedule_agent_update(result.get("agent_update"))
         except Exception as exc:
             event(self.logger, "AGENT_HEARTBEAT_FAILED", exception_type=type(exc).__name__, error=str(exc))
+            if strict:
+                raise
+        if not perform_actions:
+            return
         # A transient desktop-notification, update, or heartbeat error must
         # never prevent a previously approved remediation action from running.
         try:
@@ -165,8 +191,16 @@ class Agent:
             previous = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
         except (OSError, ValueError):
             previous = {}
-        if previous.get("version") == ".".join(map(str, target_version)) and previous.get("status") in {"scheduled", "failed"}:
-            return
+        target_text = ".".join(map(str, target_version))
+        if previous.get("version") == target_text and previous.get("status") in {"scheduled", "failed"}:
+            try:
+                attempted = datetime.fromisoformat(str(previous.get("attempted_at") or "").replace("Z", "+00:00"))
+                if attempted.tzinfo is None:
+                    attempted = attempted.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - attempted < timedelta(hours=24):
+                    return
+            except (TypeError, ValueError):
+                pass
         target = updates_dir / f"NorthstarEndpointAgent-Setup-{'.'.join(map(str, target_version))}.exe"
         try:
             if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest().lower() != digest:
@@ -175,8 +209,9 @@ class Agent:
             if hashlib.sha256(target.read_bytes()).hexdigest().lower() != digest:
                 target.unlink(missing_ok=True)
                 raise RuntimeError("downloaded agent update failed checksum validation")
-            state_path.write_text(json.dumps({"version": ".".join(map(str, target_version)),
-                                               "sha256": digest, "status": "scheduled"}), encoding="utf-8")
+            attempted_at = datetime.now(timezone.utc).isoformat()
+            state_path.write_text(json.dumps({"version": target_text, "sha256": digest,
+                                               "status": "scheduled", "attempted_at": attempted_at}), encoding="utf-8")
             # Run a separate command process.  Setup stops this scheduled agent
             # before replacing its files, so it must not depend on this process
             # remaining alive after the installer starts.
@@ -184,11 +219,43 @@ class Agent:
             subprocess.Popen(["cmd.exe", "/c", command], close_fds=True,
                              creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) |
                                            getattr(subprocess, "DETACHED_PROCESS", 0))
-            event(self.logger, "AGENT_UPDATE_SCHEDULED", version=".".join(map(str, target_version)))
+            event(self.logger, "AGENT_UPDATE_SCHEDULED", version=target_text)
         except Exception as exc:
-            state_path.write_text(json.dumps({"version": ".".join(map(str, target_version)),
-                                               "sha256": digest, "status": "failed"}), encoding="utf-8")
+            state_path.write_text(json.dumps({"version": target_text, "sha256": digest, "status": "failed",
+                                               "attempted_at": datetime.now(timezone.utc).isoformat(),
+                                               "error": str(exc)[:300]}), encoding="utf-8")
             event(self.logger, "AGENT_UPDATE_FAILED", exception_type=type(exc).__name__)
+
+    def self_repair(self) -> None:
+        """Run installation repair independently from inventory and actions."""
+        state_path = self.data_dir / "self-repair-state.json"
+        summary = {"status": "Skipped", "changed": [], "checked_at": datetime.now(timezone.utc).isoformat()}
+        try:
+            install_root = Path(sys.executable).resolve().parent
+            script = install_root / "repair-agent-install.ps1"
+            if os.name != "nt" or not script.is_file():
+                summary["status"] = "Unavailable"
+            else:
+                completed = subprocess.run([
+                    os.path.join(os.environ.get("SystemRoot", r"C:\\Windows"),
+                                 "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+                    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
+                    "-InstallRoot", str(install_root), "-DataRoot", str(self.data_dir),
+                    "-ServerUrl", self.config.server_url, "-CurrentExecutable", str(Path(sys.executable).resolve()),
+                ], capture_output=True, text=True, timeout=180,
+                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                output = (completed.stdout or completed.stderr or "").strip()
+                changes = [line for line in output.splitlines() if line.strip()][-12:]
+                summary.update({"status": ("Repaired" if changes else "Healthy") if completed.returncode == 0 else "Failed",
+                                "changed": changes,
+                                "exit_code": completed.returncode})
+        except Exception as exc:
+            summary.update({"status": "Failed", "error": f"{type(exc).__name__}: {exc}"[:400]})
+        try:
+            state_path.write_text(json.dumps(summary), encoding="utf-8")
+        except OSError:
+            pass
+        event(self.logger, "AGENT_SELF_REPAIR", **summary)
 
     @staticmethod
     def _run(command: list[str], timeout: int = 30) -> tuple[bool, str]:
@@ -376,6 +443,7 @@ def main(argv=None) -> int:
     parser.add_argument("--credential-scope", choices=("user", "machine"), default="")
     parser.add_argument("--tls-pin", default="")
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--heartbeat-once", action="store_true")
     args = parser.parse_args(argv)
     config_path = args.data_dir / "config.json"
     config = AgentConfig.load(config_path) if config_path.exists() else AgentConfig(server_url=args.server or "")
@@ -393,7 +461,7 @@ def main(argv=None) -> int:
     # installation so later launches do not silently restore the old cadence.
     if config_path.exists():
         config.save(config_path)
-    instance = None if args.once else SingleInstance(args.data_dir / "agent.lock")
+    instance = None if (args.once or args.heartbeat_once) else SingleInstance(args.data_dir / "agent.lock")
     if instance and not instance.acquire():
         return 0
     agent = Agent(config, args.data_dir)
@@ -409,11 +477,15 @@ def main(argv=None) -> int:
         if args.once:
             agent.collect_and_sync(strict=True)
             return 0
+        if args.heartbeat_once:
+            agent.heartbeat(strict=True, perform_actions=False)
+            return 0
         event(agent.logger, "AGENT_STARTED", version=__version__)
         scheduler = Scheduler(agent.collect_and_sync, agent.heartbeat,
                               config.full_interval_seconds, config.heartbeat_interval_seconds,
                               refresh_requested=agent.consume_tray_refresh_request,
-                              full_timeout=900, full_timeout_action=agent.inventory_timed_out)
+                              full_timeout=900, full_timeout_action=agent.inventory_timed_out,
+                              maintenance_action=agent.self_repair, maintenance_interval=21600)
         scheduler.start()
         stop = threading.Event()
         signal.signal(signal.SIGINT, lambda *_: stop.set())

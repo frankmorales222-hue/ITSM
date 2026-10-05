@@ -9,6 +9,19 @@ param(
     [string]$AgentExecutable = ""
 )
 $ErrorActionPreference = "Stop"
+$errorLog = Join-Path $env:ProgramData "NorthstarEndpointAgent-install-error.log"
+$warningLog = Join-Path $env:ProgramData "NorthstarEndpointAgent-install-warning.log"
+Remove-Item -LiteralPath $errorLog,$warningLog -Force -ErrorAction SilentlyContinue
+trap {
+    $details = ($_ | Out-String).Trim()
+    Set-Content -LiteralPath $errorLog -Value $details -Encoding UTF8
+    Write-Error $details
+    exit 1
+}
+function Write-InstallWarning([string]$Message) {
+    Add-Content -LiteralPath $warningLog -Value $Message -Encoding UTF8
+    Write-Warning $Message
+}
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw "Run this installer from an elevated administrator session or a device-management system context."
@@ -16,13 +29,13 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $taskName = "Northstar Endpoint Agent"
 $logonTaskName = "Northstar Endpoint Agent - User Logon Inventory"
 $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
-$installLog = Join-Path $DataRoot "install-error.log"
 $packagedExecutable = Join-Path $PSScriptRoot "NorthstarEndpointAgent.exe"
 $packagedTrayDirectory = Join-Path $PSScriptRoot "NorthstarEndpointTray"
 $packagedTrayExecutable = Join-Path $packagedTrayDirectory "NorthstarEndpointTray.exe"
 $packagedTrayLauncher = Join-Path $PSScriptRoot "launch-tray.ps1"
 $packagedTrayTaskInstaller = Join-Path $PSScriptRoot "install-tray-launcher-task.ps1"
 $packagedLegacyMigration = Join-Path $PSScriptRoot "migrate-legacy-x86-install.ps1"
+$packagedRepair = Join-Path $PSScriptRoot "repair-agent-install.ps1"
 $packagedIcon = Join-Path $PSScriptRoot "northstar.ico"
 $sourceExecutable = if ($AgentExecutable) { $AgentExecutable } elseif (Test-Path -LiteralPath $packagedExecutable) { $packagedExecutable } else { Join-Path (Split-Path -Parent $PSScriptRoot) "dist\NorthstarEndpointAgent.exe" }
 if (-not (Test-Path -LiteralPath $sourceExecutable)) {
@@ -34,6 +47,7 @@ if (-not (Test-Path -LiteralPath $packagedTrayExecutable)) {
 if (-not (Test-Path -LiteralPath $packagedTrayLauncher) -or
     -not (Test-Path -LiteralPath $packagedTrayTaskInstaller) -or
     -not (Test-Path -LiteralPath $packagedLegacyMigration) -or
+    -not (Test-Path -LiteralPath $packagedRepair) -or
     -not (Test-Path -LiteralPath $packagedIcon)) {
     throw "Northstar tray launcher installation scripts were not found."
 }
@@ -54,6 +68,7 @@ $trayConfigPath = Join-Path $InstallRoot "tray-config.json"
 $targetTrayLauncher = Join-Path $InstallRoot "launch-tray.ps1"
 $targetTrayTaskInstaller = Join-Path $InstallRoot "install-tray-launcher-task.ps1"
 $targetLegacyMigration = Join-Path $InstallRoot "migrate-legacy-x86-install.ps1"
+$targetRepair = Join-Path $InstallRoot "repair-agent-install.ps1"
 $targetIcon = Join-Path $InstallRoot "northstar.ico"
 
 # A clean installation has no existing scheduled tasks. schtasks writes that
@@ -90,17 +105,37 @@ if ((Resolve-Path -LiteralPath $packagedTrayTaskInstaller).Path -ne [IO.Path]::G
 if ((Resolve-Path -LiteralPath $packagedLegacyMigration).Path -ne [IO.Path]::GetFullPath($targetLegacyMigration)) {
     Copy-Item -LiteralPath $packagedLegacyMigration -Destination $targetLegacyMigration -Force
 }
+if ((Resolve-Path -LiteralPath $packagedRepair).Path -ne [IO.Path]::GetFullPath($targetRepair)) {
+    Copy-Item -LiteralPath $packagedRepair -Destination $targetRepair -Force
+}
 if ((Resolve-Path -LiteralPath $packagedIcon).Path -ne [IO.Path]::GetFullPath($targetIcon)) {
     Copy-Item -LiteralPath $packagedIcon -Destination $targetIcon -Force
 }
 
 $configPath = Join-Path $DataRoot "config.json"
-if (-not (Test-Path -LiteralPath $configPath)) {
-    if ($EnrollmentTokenFile) {
-        $EnrollmentToken = (Get-Content -LiteralPath $EnrollmentTokenFile -Raw).Trim()
-    } elseif (-not $EnrollmentToken -and $env:NORTHSTAR_ENROLLMENT_TOKEN) {
-        $EnrollmentToken = $env:NORTHSTAR_ENROLLMENT_TOKEN
+if ($EnrollmentTokenFile) {
+    $EnrollmentToken = (Get-Content -LiteralPath $EnrollmentTokenFile -Raw).Trim()
+} elseif (-not $EnrollmentToken -and $env:NORTHSTAR_ENROLLMENT_TOKEN) {
+    $EnrollmentToken = $env:NORTHSTAR_ENROLLMENT_TOKEN
+}
+
+# A new code after uninstall may accompany a retained but revoked credential.
+# Test that credential once; preserve valid enrollment, otherwise back it up
+# and perform a clean enrollment with the supplied code.
+if ((Test-Path -LiteralPath $configPath) -and $EnrollmentToken) {
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $credentialOutput = & $targetExecutable --data-dir $DataRoot --heartbeat-once 2>&1
+    $credentialExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousPreference
+    if ($credentialExitCode -ne 0) {
+        $backup = Join-Path $DataRoot ("config.json.bak-" + (Get-Date -Format "yyyyMMddHHmmss"))
+        Move-Item -LiteralPath $configPath -Destination $backup
+        Write-InstallWarning "The retained endpoint credential was rejected and was backed up to $backup before re-enrollment. $($credentialOutput -join ' ')"
     }
+}
+
+if (-not (Test-Path -LiteralPath $configPath)) {
     if (-not $EnrollmentToken) { throw "First installation requires -EnrollmentTokenFile or NORTHSTAR_ENROLLMENT_TOKEN." }
     $temporaryToken = Join-Path $DataRoot "enrollment.token"
     try {
@@ -118,14 +153,11 @@ if (-not (Test-Path -LiteralPath $configPath)) {
         Remove-Item -LiteralPath $temporaryToken -Force -ErrorAction SilentlyContinue
     }
     $EnrollmentToken = $null
-    if ($agentExitCode -ne 0 -or -not (Test-Path -LiteralPath $configPath)) {
-        $agentLog = Join-Path $DataRoot "agent.log"
-        @(
-            "Endpoint enrollment or first inventory failed (exit code $agentExitCode)."
-            ($agentOutput | Out-String)
-            $(if (Test-Path -LiteralPath $agentLog) { Get-Content -LiteralPath $agentLog -Tail 40 | Out-String })
-        ) | Set-Content -LiteralPath $installLog -Encoding UTF8
-        throw "Endpoint enrollment or first inventory failed. Diagnostic: $installLog"
+    if (-not (Test-Path -LiteralPath $configPath)) {
+        throw "Endpoint enrollment failed (exit code $agentExitCode): $($agentOutput -join ' ')"
+    }
+    if ($agentExitCode -ne 0) {
+        Write-InstallWarning "Endpoint enrollment succeeded, but the first inventory failed (exit code $agentExitCode). The scheduled agent will retry. $($agentOutput -join ' ')"
     }
 } else {
     # A repair/update must never be marked failed merely because the optional
@@ -180,7 +212,19 @@ Register-NorthstarTask -Name $logonTaskName -TriggerXml '<LogonTrigger><Enabled>
 & $schtasks /Run /TN $taskName | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Northstar was installed but its startup task could not be started." }
 & $targetLegacyMigration -InstallRoot $InstallRoot
-& $targetTrayTaskInstaller -InstallRoot $InstallRoot
-& $schtasks /Run /TN "Northstar Endpoint Tray Launcher" | Out-Null
+$deadline = (Get-Date).AddSeconds(30)
+do {
+    $confirmed = @(Get-CimInstance Win32_Process -Filter "Name='NorthstarEndpointAgent.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.ExecutablePath -and ([IO.Path]::GetFullPath($_.ExecutablePath) -ieq [IO.Path]::GetFullPath($targetExecutable)) }).Count -gt 0
+    if (-not $confirmed) { Start-Sleep -Milliseconds 500 }
+} while (-not $confirmed -and (Get-Date) -lt $deadline)
+if (-not $confirmed) { throw "The new Northstar Endpoint Agent was not confirmed running from $targetExecutable within 30 seconds." }
+try {
+    & $targetTrayTaskInstaller -InstallRoot $InstallRoot
+    & $schtasks /Run /TN "Northstar Endpoint Tray Launcher" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "The tray launcher task could not be started (exit code $LASTEXITCODE)." }
+} catch {
+    Write-InstallWarning "The endpoint agent is running, but tray startup needs attention: $($_.Exception.Message)"
+}
 Write-Host "Northstar Endpoint Agent installed for all users and reporting to $ServerUrl"
 Write-Host "The tray companion was requested for signed-in users and will also start at future sign-ins."

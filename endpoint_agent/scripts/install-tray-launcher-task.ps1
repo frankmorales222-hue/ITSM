@@ -37,10 +37,24 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not register '$TaskName': $($output -join ' ')"
     }
-    $registeredXml = (& $schtasks /Query /TN $TaskName /XML 2>&1) -join "`n"
-    if ($LASTEXITCODE -ne 0 -or
-        $registeredXml -notmatch '<GroupId>S-1-5-32-545</GroupId>' -or
-        $registeredXml -notmatch '<RunLevel>LeastPrivilege</RunLevel>') {
+    $registeredText = (& $schtasks /Query /TN $TaskName /XML 2>&1) -join "`n"
+    if ($LASTEXITCODE -ne 0) {
+        throw "The Northstar tray launcher task could not be queried after registration."
+    }
+    [xml]$registered = $registeredText
+    $namespace = New-Object Xml.XmlNamespaceManager($registered.NameTable)
+    $namespace.AddNamespace("t", $registered.DocumentElement.NamespaceURI)
+    $principal = $registered.SelectSingleNode("/t:Task/t:Principals/t:Principal", $namespace)
+    $groupText = [string]$principal.GroupId
+    try {
+        $groupSid = (New-Object Security.Principal.NTAccount($groupText)).Translate([Security.Principal.SecurityIdentifier]).Value
+    } catch {
+        try { $groupSid = (New-Object Security.Principal.SecurityIdentifier($groupText)).Value }
+        catch { $groupSid = "" }
+    }
+    $runLevel = [string]$principal.RunLevel
+    if (-not $principal -or $groupSid -ne "S-1-5-32-545" -or
+        ($runLevel -and $runLevel -ne "LeastPrivilege")) {
         throw "The Northstar tray launcher task principal was not registered safely."
     }
 } finally {
