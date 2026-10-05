@@ -1,0 +1,1 @@
+Endpoint actions now find the ticket requester's active Windows session, including Remote Desktop sessions, before closing a hung application. If Windows reports that no matching process is running, the action is now correctly reported as unsuccessful.

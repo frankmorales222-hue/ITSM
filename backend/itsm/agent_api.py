@@ -32,7 +32,7 @@ from .security import STAFF_ROLES, current_user, get_current_session, require_ro
 from .services import audit, notify
 
 router = APIRouter(prefix="/api")
-CURRENT_ENDPOINT_AGENT_VERSION = "0.1.40"
+CURRENT_ENDPOINT_AGENT_VERSION = "0.1.41"
 AGENT_CHECK_IN_GRACE = timedelta(minutes=5)
 
 
@@ -982,12 +982,18 @@ def next_endpoint_action(agent: EndpointAgent = Depends(_agent_from_bearer), db:
         return {"action": None}
     item.dispatched_at = now()
     item.retry_count += 1
+    ticket = db.get(Ticket, item.ticket_id)
+    requester = db.get(User, ticket.requester_id) if ticket else None
+    employee = db.get(Employee, ticket.employee_id) if ticket and ticket.employee_id else None
     audit(db, "endpoint_action.dispatched", "endpoint_action", item.id, None,
           new={"ticket_id": item.ticket_id, "agent_id": agent.id, "action_type": item.action_type,
                "attempt": item.retry_count})
     db.commit(); db.refresh(item)
     return {"action": {"id": item.id, "action_type": item.action_type,
-                       "target": item.target, "attempt": item.retry_count}}
+                       "target": item.target, "attempt": item.retry_count,
+                       "requester_username": ((employee.account_name if employee else "") or
+                                              (requester.username if requester else "")),
+                       "requester_upn": requester.email if requester else ""}}
 
 
 @router.post("/agent/actions/{action_id}/result")

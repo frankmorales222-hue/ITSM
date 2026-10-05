@@ -152,7 +152,8 @@ def test_agent_runs_only_server_approved_allowlisted_action(monkeypatch):
         def __init__(self):
             self.result = None
         def next_action(self, _credential):
-            return {"action":{"id":7,"action_type":"terminate_process","target":"EXCEL.EXE"}}
+            return {"action":{"id":7,"action_type":"terminate_process","target":"EXCEL.EXE",
+                              "requester_username":"requester"}}
         def action_result(self, _credential, action_id, succeeded, summary):
             self.result = (action_id, succeeded, summary)
     transport = Transport()
@@ -161,7 +162,7 @@ def test_agent_runs_only_server_approved_allowlisted_action(monkeypatch):
     agent.transport = transport
     agent.logger = __import__("logging").getLogger("endpoint-action-test")
     observed = []
-    monkeypatch.setattr(Agent, "_active_interactive_session_id", staticmethod(lambda: 7))
+    monkeypatch.setattr(Agent, "_session_id_for_requester", classmethod(lambda cls, action: 7))
     monkeypatch.setattr(Agent, "_run", staticmethod(lambda command, timeout=30: (
         observed.append(command) is None, "Closed EXCEL.EXE.",
     )))
@@ -180,7 +181,8 @@ def test_agent_reports_when_process_is_not_running_in_signed_in_session(monkeypa
         def __init__(self):
             self.result = None
         def next_action(self, _credential):
-            return {"action":{"id":9,"action_type":"terminate_process","target":"EXCEL.EXE"}}
+            return {"action":{"id":9,"action_type":"terminate_process","target":"EXCEL.EXE",
+                              "requester_username":"requester"}}
         def action_result(self, _credential, action_id, succeeded, summary):
             self.result = (action_id, succeeded, summary)
     transport = Transport()
@@ -188,12 +190,26 @@ def test_agent_reports_when_process_is_not_running_in_signed_in_session(monkeypa
     agent.config = type("Config", (), {"credential":"device-secret"})()
     agent.transport = transport
     agent.logger = __import__("logging").getLogger("endpoint-action-missing-test")
-    monkeypatch.setattr(Agent, "_active_interactive_session_id", staticmethod(lambda: 12))
-    monkeypatch.setattr(Agent, "_run", staticmethod(lambda command, timeout=30: (False, "no tasks")))
+    monkeypatch.setattr(Agent, "_session_id_for_requester", classmethod(lambda cls, action: 12))
+    monkeypatch.setattr(Agent, "_run", staticmethod(lambda command, timeout=30: (
+        True, "INFO: No tasks running with the specified criteria.",
+    )))
 
     agent.perform_approved_action()
 
     assert transport.result == (9, False, "EXCEL.EXE is not running for the signed-in user")
+
+
+def test_requester_rdp_session_is_chosen_over_console_session(monkeypatch):
+    monkeypatch.setattr(Agent, "_windows_sessions", staticmethod(lambda: [
+        {"session_id": 1, "username": "console.user", "domain": "EXAMPLE", "console": True},
+        {"session_id": 14, "username": "requester", "domain": "EXAMPLE", "console": False},
+    ]))
+
+    assert Agent._session_id_for_requester({
+        "requester_username": "requester",
+        "requester_upn": "requester@example.test",
+    }) == 14
 
 
 def test_action_scheduler_runs_while_inventory_is_blocked_and_times_out():
@@ -286,17 +302,17 @@ def test_system_install_relaunches_tray_through_users_group_task():
     assert 'ProgramData' not in migration
 
 
-def test_agent_0140_release_metadata_is_aligned():
+def test_agent_0141_release_metadata_is_aligned():
     root = Path(__file__).resolve().parents[1]
-    assert '__version__ = "0.1.40"' in (root /
+    assert '__version__ = "0.1.41"' in (root /
         "asset_agent/__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.1.40"' in (root /
+    assert 'version = "0.1.41"' in (root /
         "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.1.40"' in (root /
+    assert '#define MyAppVersion "0.1.41"' in (root /
         "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
-    notes = (root / "release-notes-0.1.40.txt").read_text(encoding="utf-8")
-    assert "signed-in user" in notes and "inventory" in notes.lower()
+    notes = (root / "release-notes-0.1.41.txt").read_text(encoding="utf-8")
+    assert "Remote Desktop" in notes and "No tasks running" in notes
     server_installer = (root.parent / "installer/NorthstarDeskServer.iss").read_text(encoding="utf-8")
     server_builder = (root.parent / "installer/build-full-server-update.ps1").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.4.93"' in server_installer
-    assert '[string]$Version = "0.4.93"' in server_builder
+    assert '#define MyAppVersion "0.4.94"' in server_installer
+    assert '[string]$Version = "0.4.94"' in server_builder

@@ -1,0 +1,1 @@
+Northstar Endpoint Agent 0.1.41 finds the ticket requester in active Windows sessions, including Remote Desktop sessions, before closing a hung application. A taskkill result that says "No tasks running" is now reported as unsuccessful instead of incorrectly reporting that the application was closed.

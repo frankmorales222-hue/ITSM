@@ -1,5 +1,6 @@
 import argparse
 import ctypes
+from ctypes import wintypes
 import hashlib
 import json
 import os
@@ -197,12 +198,95 @@ class Agent:
         return completed.returncode == 0, output[-900:]
 
     @staticmethod
-    def _active_interactive_session_id() -> int | None:
-        """Return the Windows console session containing the signed-in user."""
+    def _windows_sessions() -> list[dict]:
+        """Enumerate active interactive Windows sessions and their owners."""
         if os.name != "nt":
-            return None
-        session_id = int(ctypes.windll.kernel32.WTSGetActiveConsoleSessionId())
-        return None if session_id == 0xFFFFFFFF else session_id
+            return []
+
+        class WTS_SESSION_INFO(ctypes.Structure):
+            _fields_ = [
+                ("session_id", wintypes.DWORD),
+                ("station_name", wintypes.LPWSTR),
+                ("state", ctypes.c_int),
+            ]
+
+        wts = ctypes.WinDLL("Wtsapi32.dll")
+        sessions_pointer = ctypes.POINTER(WTS_SESSION_INFO)()
+        count = wintypes.DWORD()
+        wts.WTSEnumerateSessionsW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+            ctypes.POINTER(ctypes.POINTER(WTS_SESSION_INFO)), ctypes.POINTER(wintypes.DWORD),
+        ]
+        wts.WTSEnumerateSessionsW.restype = wintypes.BOOL
+        wts.WTSQuerySessionInformationW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.c_int,
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD),
+        ]
+        wts.WTSQuerySessionInformationW.restype = wintypes.BOOL
+        wts.WTSFreeMemory.argtypes = [ctypes.c_void_p]
+
+        def session_text(session_id: int, information_class: int) -> str:
+            buffer = ctypes.c_void_p()
+            size = wintypes.DWORD()
+            if not wts.WTSQuerySessionInformationW(
+                    wintypes.HANDLE(0), session_id, information_class,
+                    ctypes.byref(buffer), ctypes.byref(size)):
+                return ""
+            try:
+                return ctypes.wstring_at(buffer.value).strip() if buffer.value else ""
+            finally:
+                if buffer.value:
+                    wts.WTSFreeMemory(buffer)
+
+        if not wts.WTSEnumerateSessionsW(
+                wintypes.HANDLE(0), 0, 1, ctypes.byref(sessions_pointer), ctypes.byref(count)):
+            return []
+        try:
+            sessions = []
+            for index in range(count.value):
+                item = sessions_pointer[index]
+                if item.state != 0:  # WTSActive
+                    continue
+                username = session_text(item.session_id, 5)  # WTSUserName
+                domain = session_text(item.session_id, 7)  # WTSDomainName
+                if username:
+                    sessions.append({
+                        "session_id": int(item.session_id),
+                        "username": username,
+                        "domain": domain,
+                        "console": str(item.station_name or "").casefold() == "console",
+                    })
+            return sessions
+        finally:
+            wts.WTSFreeMemory(sessions_pointer)
+
+    @staticmethod
+    def _identity_names(value: object) -> set[str]:
+        candidate = str(value or "").strip().casefold()
+        if not candidate:
+            return set()
+        names = {candidate}
+        if "\\" in candidate:
+            names.add(candidate.rsplit("\\", 1)[-1])
+        if "@" in candidate:
+            names.add(candidate.split("@", 1)[0])
+        return names
+
+    @classmethod
+    def _session_id_for_requester(cls, action: dict) -> int | None:
+        requested_names = set()
+        requested_names.update(cls._identity_names(action.get("requester_username")))
+        requested_names.update(cls._identity_names(action.get("requester_upn")))
+        sessions = cls._windows_sessions()
+        for session in sessions:
+            session_names = cls._identity_names(session.get("username"))
+            domain = str(session.get("domain") or "").strip()
+            if domain and session.get("username"):
+                session_names.update(cls._identity_names(f"{domain}\\{session['username']}"))
+            if requested_names and requested_names.intersection(session_names):
+                return int(session["session_id"])
+        console = next((session for session in sessions if session.get("console")), None)
+        return int(console["session_id"]) if console else None
 
     def inventory_timed_out(self) -> None:
         event(self.logger, "DEVICE_INVENTORY_TIMEOUT", timeout_seconds=900)
@@ -230,19 +314,22 @@ class Agent:
                 image_name = os.path.basename(target.strip().strip('"'))
                 if not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.exe", image_name, flags=re.IGNORECASE):
                     raise ValueError("Application name is not allowed")
-                session_id = self._active_interactive_session_id()
+                session_id = self._session_id_for_requester(action)
                 if session_id is None:
-                    raise RuntimeError("No signed-in user session is available")
-                taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\\Windows"), "System32", "taskkill.exe")
-                if not os.path.isfile(taskkill):
-                    taskkill = "taskkill.exe"
-                succeeded, detail = self._run([
-                    taskkill, "/F", "/T", "/FI", f"SESSION eq {session_id}",
-                    "/FI", f"IMAGENAME eq {image_name}",
-                ], 20)
-                summary = (detail or f"Closed {image_name}.") if succeeded else (
-                    f"{image_name} is not running for the signed-in user"
-                )
+                    summary = "The requester is not signed in on this computer."
+                else:
+                    taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\\Windows"), "System32", "taskkill.exe")
+                    if not os.path.isfile(taskkill):
+                        taskkill = "taskkill.exe"
+                    succeeded, detail = self._run([
+                        taskkill, "/F", "/T", "/FI", f"SESSION eq {session_id}",
+                        "/FI", f"IMAGENAME eq {image_name}",
+                    ], 20)
+                    if "no tasks running" in detail.casefold():
+                        succeeded = False
+                    summary = (detail or f"Closed {image_name}.") if succeeded else (
+                        f"{image_name} is not running for the signed-in user"
+                    )
             elif action_type == "restart_service":
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", target):
                     raise ValueError("Service name is not allowed")

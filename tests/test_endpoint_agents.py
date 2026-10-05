@@ -112,7 +112,7 @@ def test_agent_rejects_wrong_device_and_revocation(client):
     assert devices.status_code == 200
     agent = next(item for item in devices.json() if item["device_id_suffix"] == DEVICE_ID[-8:])
     assert agent["agent_version"] == "0.1.0"
-    assert agent["current_agent_version"] == "0.1.40"
+    assert agent["current_agent_version"] == "0.1.41"
     assert agent["is_outdated"] is True
     assert agent["check_in_overdue"] is False
     assert agent["last_seen_at"]
@@ -195,6 +195,8 @@ def test_technician_requests_and_agent_runs_requester_approved_action(client):
     assert dispatched.status_code == 200, dispatched.text
     assert dispatched.json()["action"]["target"] == "EXCEL.EXE"
     assert dispatched.json()["action"]["attempt"] == 1
+    assert dispatched.json()["action"]["requester_username"] == "user1"
+    assert dispatched.json()["action"]["requester_upn"] == "user1@example.test"
     with SessionLocal() as db:
         fetched = db.get(EndpointAction, action_id)
         assert fetched.status == "Approved"

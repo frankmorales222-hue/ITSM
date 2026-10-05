@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.4.93",
+    [string]$Version = "0.4.94",
     [string]$MinimumCurrentVersion = "0.4.86",
     [string]$CodeSigningThumbprint = $env:NORTHSTAR_CODESIGN_THUMBPRINT,
     [string]$TimestampUrl = "http://timestamp.digicert.com"
