@@ -212,6 +212,81 @@ def test_requester_rdp_session_is_chosen_over_console_session(monkeypatch):
     }) == 14
 
 
+def test_unmatched_requester_uses_the_only_active_user_session(monkeypatch):
+    monkeypatch.setattr(Agent, "_windows_sessions", staticmethod(lambda: [
+        {"session_id": 22, "username": "only.user", "domain": "EXAMPLE", "console": False},
+    ]))
+
+    assert Agent._session_id_for_requester({
+        "requester_username": "different.user",
+        "requester_upn": "different.user@example.test",
+    }) == 22
+
+
+def test_unmatched_requester_is_not_assigned_when_two_users_are_active(monkeypatch):
+    monkeypatch.setattr(Agent, "_windows_sessions", staticmethod(lambda: [
+        {"session_id": 1, "username": "console.user", "domain": "EXAMPLE", "console": True},
+        {"session_id": 14, "username": "rdp.user", "domain": "EXAMPLE", "console": False},
+    ]))
+
+    assert Agent._session_id_for_requester({
+        "requester_username": "missing.user",
+        "requester_upn": "missing.user@example.test",
+    }) is None
+
+
+def test_action_does_not_run_when_requester_is_unmatched_with_two_active_users(monkeypatch):
+    class Transport:
+        def __init__(self):
+            self.result = None
+        def next_action(self, _credential):
+            return {"action":{"id":11,"action_type":"terminate_process","target":"EXCEL.EXE",
+                              "requester_username":"missing.user"}}
+        def action_result(self, _credential, action_id, succeeded, summary):
+            self.result = (action_id, succeeded, summary)
+    transport = Transport()
+    agent = Agent.__new__(Agent)
+    agent.config = type("Config", (), {"credential":"device-secret"})()
+    agent.transport = transport
+    agent.logger = __import__("logging").getLogger("endpoint-action-ambiguous-session-test")
+    monkeypatch.setattr(Agent, "_windows_sessions", staticmethod(lambda: [
+        {"session_id": 1, "username": "console.user", "domain": "EXAMPLE", "console": True},
+        {"session_id": 14, "username": "rdp.user", "domain": "EXAMPLE", "console": False},
+    ]))
+    executed = []
+    monkeypatch.setattr(Agent, "_run", staticmethod(
+        lambda command, timeout=30: (executed.append(command) is None, "unexpected")))
+
+    agent.perform_approved_action()
+
+    assert executed == []
+    assert transport.result == (11, False, "The requester is not signed in on this computer.")
+
+
+def test_taskkill_access_denied_reports_the_real_error(monkeypatch):
+    class Transport:
+        def __init__(self):
+            self.result = None
+        def next_action(self, _credential):
+            return {"action":{"id":10,"action_type":"terminate_process","target":"EXCEL.EXE",
+                              "requester_username":"requester"}}
+        def action_result(self, _credential, action_id, succeeded, summary):
+            self.result = (action_id, succeeded, summary)
+    transport = Transport()
+    agent = Agent.__new__(Agent)
+    agent.config = type("Config", (), {"credential":"device-secret"})()
+    agent.transport = transport
+    agent.logger = __import__("logging").getLogger("endpoint-action-denied-test")
+    monkeypatch.setattr(Agent, "_session_id_for_requester", classmethod(lambda cls, action: 12))
+    monkeypatch.setattr(Agent, "_run", staticmethod(lambda command, timeout=30: (
+        False, "ERROR: Access is denied.",
+    )))
+
+    agent.perform_approved_action()
+
+    assert transport.result == (10, False, "ERROR: Access is denied.")
+
+
 def test_action_scheduler_runs_while_inventory_is_blocked_and_times_out():
     inventory_started = threading.Event()
     release_inventory = threading.Event()
@@ -302,17 +377,17 @@ def test_system_install_relaunches_tray_through_users_group_task():
     assert 'ProgramData' not in migration
 
 
-def test_agent_0141_release_metadata_is_aligned():
+def test_agent_0142_release_metadata_is_aligned():
     root = Path(__file__).resolve().parents[1]
-    assert '__version__ = "0.1.41"' in (root /
+    assert '__version__ = "0.1.42"' in (root /
         "asset_agent/__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.1.41"' in (root /
+    assert 'version = "0.1.42"' in (root /
         "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.1.41"' in (root /
+    assert '#define MyAppVersion "0.1.42"' in (root /
         "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
-    notes = (root / "release-notes-0.1.41.txt").read_text(encoding="utf-8")
-    assert "Remote Desktop" in notes and "No tasks running" in notes
+    notes = (root / "release-notes-0.1.42.txt").read_text(encoding="utf-8")
+    assert "exactly one" in notes and "Access is denied" in notes
     server_installer = (root.parent / "installer/NorthstarDeskServer.iss").read_text(encoding="utf-8")
     server_builder = (root.parent / "installer/build-full-server-update.ps1").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.4.94"' in server_installer
-    assert '[string]$Version = "0.4.94"' in server_builder
+    assert '#define MyAppVersion "0.4.95"' in server_installer
+    assert '[string]$Version = "0.4.95"' in server_builder

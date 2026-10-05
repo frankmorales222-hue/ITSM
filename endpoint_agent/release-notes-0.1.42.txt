@@ -1,0 +1,1 @@
+Northstar Endpoint Agent 0.1.42 uses an unmatched Windows session only when exactly one signed-in user is active, and never guesses when multiple users are signed in. Failed application-close actions now retain the real Windows taskkill error, such as "Access is denied", for support review.

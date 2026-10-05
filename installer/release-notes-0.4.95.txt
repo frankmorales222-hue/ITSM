@@ -1,0 +1,1 @@
+Endpoint application-close actions now use an unmatched Windows session only when exactly one user is signed in, never guess between multiple active users, and report the real Windows error when taskkill fails.

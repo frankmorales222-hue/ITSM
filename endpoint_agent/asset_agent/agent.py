@@ -285,8 +285,11 @@ class Agent:
                 session_names.update(cls._identity_names(f"{domain}\\{session['username']}"))
             if requested_names and requested_names.intersection(session_names):
                 return int(session["session_id"])
-        console = next((session for session in sessions if session.get("console")), None)
-        return int(console["session_id"]) if console else None
+        # Older servers may not send requester identity, and directory naming
+        # can occasionally differ from the WTS username. A single active user
+        # is unambiguous; with two or more users, never guess which session owns
+        # the request or terminate another person's process.
+        return int(sessions[0]["session_id"]) if len(sessions) == 1 else None
 
     def inventory_timed_out(self) -> None:
         event(self.logger, "DEVICE_INVENTORY_TIMEOUT", timeout_seconds=900)
@@ -325,11 +328,15 @@ class Agent:
                         taskkill, "/F", "/T", "/FI", f"SESSION eq {session_id}",
                         "/FI", f"IMAGENAME eq {image_name}",
                     ], 20)
-                    if "no tasks running" in detail.casefold():
+                    no_matching_process = "no tasks running" in detail.casefold()
+                    if no_matching_process:
                         succeeded = False
-                    summary = (detail or f"Closed {image_name}.") if succeeded else (
-                        f"{image_name} is not running for the signed-in user"
-                    )
+                    if succeeded:
+                        summary = detail or f"Closed {image_name}."
+                    elif no_matching_process:
+                        summary = f"{image_name} is not running for the signed-in user"
+                    else:
+                        summary = detail or f"Could not close {image_name}."
             elif action_type == "restart_service":
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", target):
                     raise ValueError("Service name is not allowed")
