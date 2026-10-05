@@ -1,13 +1,18 @@
 """Store endpoint update and self-repair state.
 
+The numeric prefix is intentionally out of sequence. Release 0.4.96 shipped
+this revision identifier after revision 0024, and production databases already
+store ``0013_agent_health_state``. Never rename this revision; future
+migrations must descend from the current single head.
+
 Revision ID: 0013_agent_health_state
-Revises: 0012_tasks_and_closure
+Revises: 0024_endpoint_action_auto
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "0013_agent_health_state"
-down_revision = "0012_tasks_and_closure"
+down_revision = "0024_endpoint_action_auto"
 branch_labels = None
 depends_on = None
 

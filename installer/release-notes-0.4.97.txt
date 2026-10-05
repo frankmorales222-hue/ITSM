@@ -1,0 +1,1 @@
+Fixes a database migration ordering error in 0.4.96 that prevented the server from starting after the update.

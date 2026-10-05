@@ -450,5 +450,5 @@ def test_agent_0143_release_metadata_is_aligned():
     assert "repair their own installation" in notes and "32-bit agent" in notes
     server_installer = (root.parent / "installer/NorthstarDeskServer.iss").read_text(encoding="utf-8")
     server_builder = (root.parent / "installer/build-full-server-update.ps1").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.4.96"' in server_installer
-    assert '[string]$Version = "0.4.96"' in server_builder
+    assert '#define MyAppVersion "0.4.97"' in server_installer
+    assert '[string]$Version = "0.4.97"' in server_builder

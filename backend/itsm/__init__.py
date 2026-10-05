@@ -1,3 +1,3 @@
 """Northstar Desk IT service management application."""
 
-__version__ = "0.4.96"
+__version__ = "0.4.97"
