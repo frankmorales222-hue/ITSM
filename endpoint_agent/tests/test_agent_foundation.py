@@ -1,4 +1,5 @@
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from asset_agent.storage.database import AgentDatabase
 from asset_agent.tray import help_desk_urls
 from asset_agent.transport.sync_interface import InventoryTransport
 from asset_agent.observed_user import observed_user_claims
+from asset_agent.scheduler import Scheduler
 
 
 def test_stable_device_identity_prefers_valid_smbios_uuid():
@@ -159,14 +161,63 @@ def test_agent_runs_only_server_approved_allowlisted_action(monkeypatch):
     agent.transport = transport
     agent.logger = __import__("logging").getLogger("endpoint-action-test")
     observed = []
+    monkeypatch.setattr(Agent, "_active_interactive_session_id", staticmethod(lambda: 7))
     monkeypatch.setattr(Agent, "_run", staticmethod(lambda command, timeout=30: (
         observed.append(command) is None, "Closed EXCEL.EXE.",
     )))
     agent.perform_approved_action()
     assert len(observed) == 1
-    assert observed[0][-4:] == ["/F", "/T", "/IM", "EXCEL.EXE"]
+    assert observed[0][1:] == [
+        "/F", "/T", "/FI", "SESSION eq 7", "/FI", "IMAGENAME eq EXCEL.EXE",
+    ]
+    assert "/IM" not in observed[0]
     assert observed[0][0].lower().endswith("\\system32\\taskkill.exe") or observed[0][0] == "taskkill.exe"
     assert transport.result == (7, True, "Closed EXCEL.EXE.")
+
+
+def test_agent_reports_when_process_is_not_running_in_signed_in_session(monkeypatch):
+    class Transport:
+        def __init__(self):
+            self.result = None
+        def next_action(self, _credential):
+            return {"action":{"id":9,"action_type":"terminate_process","target":"EXCEL.EXE"}}
+        def action_result(self, _credential, action_id, succeeded, summary):
+            self.result = (action_id, succeeded, summary)
+    transport = Transport()
+    agent = Agent.__new__(Agent)
+    agent.config = type("Config", (), {"credential":"device-secret"})()
+    agent.transport = transport
+    agent.logger = __import__("logging").getLogger("endpoint-action-missing-test")
+    monkeypatch.setattr(Agent, "_active_interactive_session_id", staticmethod(lambda: 12))
+    monkeypatch.setattr(Agent, "_run", staticmethod(lambda command, timeout=30: (False, "no tasks")))
+
+    agent.perform_approved_action()
+
+    assert transport.result == (9, False, "EXCEL.EXE is not running for the signed-in user")
+
+
+def test_action_scheduler_runs_while_inventory_is_blocked_and_times_out():
+    inventory_started = threading.Event()
+    release_inventory = threading.Event()
+    action_processed = threading.Event()
+    inventory_timed_out = threading.Event()
+
+    def blocked_inventory():
+        inventory_started.set()
+        release_inventory.wait(5)
+
+    scheduler = Scheduler(
+        blocked_inventory, action_processed.set, full_interval=300, heartbeat_interval=15,
+        full_timeout=1, full_timeout_action=inventory_timed_out.set,
+    )
+    scheduler.start()
+    try:
+        assert inventory_started.wait(1)
+        assert action_processed.wait(1)
+        assert inventory_timed_out.wait(2)
+    finally:
+        release_inventory.set()
+        scheduler.stop()
 
 
 def test_agent_waits_for_service_to_stop_before_restart(monkeypatch):
@@ -235,17 +286,17 @@ def test_system_install_relaunches_tray_through_users_group_task():
     assert 'ProgramData' not in migration
 
 
-def test_agent_0139_release_metadata_is_aligned():
+def test_agent_0140_release_metadata_is_aligned():
     root = Path(__file__).resolve().parents[1]
-    assert '__version__ = "0.1.39"' in (root /
+    assert '__version__ = "0.1.40"' in (root /
         "asset_agent/__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.1.39"' in (root /
+    assert 'version = "0.1.40"' in (root /
         "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.1.39"' in (root /
+    assert '#define MyAppVersion "0.1.40"' in (root /
         "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
-    notes = (root / "release-notes-0.1.39.txt").read_text(encoding="utf-8")
-    assert "32-bit" in notes and "ProgramData" in notes and "tray" in notes.lower()
+    notes = (root / "release-notes-0.1.40.txt").read_text(encoding="utf-8")
+    assert "signed-in user" in notes and "inventory" in notes.lower()
     server_installer = (root.parent / "installer/NorthstarDeskServer.iss").read_text(encoding="utf-8")
     server_builder = (root.parent / "installer/build-full-server-update.ps1").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.4.92"' in server_installer
-    assert '[string]$Version = "0.4.92"' in server_builder
+    assert '#define MyAppVersion "0.4.93"' in server_installer
+    assert '[string]$Version = "0.4.93"' in server_builder

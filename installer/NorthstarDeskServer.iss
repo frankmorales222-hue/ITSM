@@ -1,5 +1,5 @@
 #define MyAppName "Northstar Desk Server"
-#define MyAppVersion "0.4.92"
+#define MyAppVersion "0.4.93"
 #define MyAppPublisher "Northstar"
 #define MyAppExeName "NorthstarDeskServer.exe"
 

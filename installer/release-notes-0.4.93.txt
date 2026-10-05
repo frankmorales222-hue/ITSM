@@ -1,0 +1,1 @@
+HTTPS repair no longer restarts the service repeatedly after a certificate expires. The endpoint agent now closes hung applications only for the signed-in user, processes support actions even while an inventory scan is running, and recovers from a stuck inventory scan.

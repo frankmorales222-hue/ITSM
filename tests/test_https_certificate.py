@@ -97,7 +97,8 @@ class _WorkerDb:
         self.rows = []
 
     def get(self, _model, _key):
-        return None
+        return next((item for item in self.rows
+                     if isinstance(item, _model) and getattr(item, "key", None) == _key), None)
 
     def add(self, item):
         self.rows.append(item)
@@ -122,7 +123,7 @@ def _custom_certificate_files(root: Path) -> str:
 
 def test_hourly_certificate_check_reapplies_custom_tls_and_restarts_https(tmp_path, monkeypatch):
     fingerprint = _custom_certificate_files(tmp_path)
-    served = iter(["OLD", fingerprint])
+    served = iter(["OLD", "OLD", fingerprint])
     restarted = []
     monkeypatch.setattr(certificate_api, "_root", lambda: tmp_path)
     monkeypatch.setattr(certificate_api, "_served_certificate_fingerprint",
@@ -130,12 +131,17 @@ def test_hourly_certificate_check_reapplies_custom_tls_and_restarts_https(tmp_pa
     monkeypatch.setattr(certificate_api, "_restart_https", lambda state: restarted.append(state))
     db = _WorkerDb()
 
+    assert worker.https_certificate_health_job(db) == 0
+    monitor = next(item for item in db.rows if isinstance(item, SystemState))
+    assert monitor.value["consecutive_failures"] == 1
+    monitor.value = {**monitor.value, "last_check": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()}
+
     assert worker.https_certificate_health_job(db) == 1
 
     assert restarted and restarted[0]["fingerprint_sha256"] == fingerprint
     assert "tls internal" not in (tmp_path / "Caddyfile").read_text(encoding="utf-8")
-    monitor = next(item for item in db.rows if isinstance(item, SystemState))
     assert monitor.value["status"] == "Repaired"
+    assert monitor.value["consecutive_failures"] == 0
 
 
 def test_hourly_certificate_check_records_failure_when_listener_still_mismatches(tmp_path, monkeypatch):
@@ -147,7 +153,73 @@ def test_hourly_certificate_check_records_failure_when_listener_still_mismatches
     db = _WorkerDb()
 
     assert worker.https_certificate_health_job(db) == 0
+    monitor = next(item for item in db.rows if isinstance(item, SystemState))
+    assert not any(isinstance(item, AutomationFailure) for item in db.rows)
+    monitor.value = {**monitor.value, "last_check": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()}
+    assert worker.https_certificate_health_job(db) == 0
 
     failure = next(item for item in db.rows if isinstance(item, AutomationFailure))
     assert failure.failure_type == "https_certificate"
     assert "not being served" in failure.summary
+
+
+def test_expired_custom_certificate_cycles_and_alerts_only_once(tmp_path, monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "helpdesk.example.com")])
+    certificate = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+        .public_key(key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now(timezone.utc) - timedelta(days=30))
+        .not_valid_after(datetime.now(timezone.utc) - timedelta(days=1))
+        .sign(key, hashes.SHA256()))
+    certificate_dir = tmp_path / "certificates"
+    certificate_dir.mkdir()
+    (certificate_dir / "fullchain.pem").write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    (certificate_dir / "privatekey.pem").write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    (certificate_dir / "status.json").write_text('{"mode":"custom"}', encoding="utf-8")
+    (tmp_path / "Caddyfile").write_text(
+        'helpdesk.example.com {\n    tls "certificates/fullchain.pem" "certificates/privatekey.pem"\n}\n',
+        encoding="utf-8")
+    cycles = []
+    monkeypatch.setattr(certificate_api, "_root", lambda: tmp_path)
+    monkeypatch.setattr(certificate_api, "_cycle_https_service", lambda: cycles.append(True))
+    db = _WorkerDb()
+
+    assert worker.https_certificate_health_job(db) == 1
+    assert cycles == [True]
+    assert len([item for item in db.rows if isinstance(item, AutomationFailure)]) == 1
+    assert "tls internal" in (tmp_path / "Caddyfile").read_text(encoding="utf-8")
+
+    monitor = next(item for item in db.rows if isinstance(item, SystemState))
+    monitor.value = {**monitor.value, "last_check": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()}
+    assert worker.https_certificate_health_job(db) == 0
+    assert cycles == [True]
+    assert len([item for item in db.rows if isinstance(item, AutomationFailure)]) == 1
+
+
+def test_one_failed_fingerprint_read_does_not_restart_but_second_does(tmp_path, monkeypatch):
+    fingerprint = _custom_certificate_files(tmp_path)
+    custom_caddy = certificate_api._custom_caddyfile(
+        (tmp_path / "Caddyfile").read_text(encoding="utf-8"),
+        tmp_path / "certificates" / "fullchain.pem", tmp_path / "certificates" / "privatekey.pem")
+    (tmp_path / "Caddyfile").write_text(custom_caddy, encoding="utf-8")
+    served = iter([RuntimeError("slow listener"), RuntimeError("slow listener"), fingerprint])
+    restarts = []
+
+    def read_fingerprint(timeout_seconds=3):
+        result = next(served)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(certificate_api, "_root", lambda: tmp_path)
+    monkeypatch.setattr(certificate_api, "_served_certificate_fingerprint", read_fingerprint)
+    monkeypatch.setattr(certificate_api, "_restart_https", lambda state: restarts.append(state))
+    db = _WorkerDb()
+
+    assert worker.https_certificate_health_job(db) == 0
+    assert restarts == []
+    monitor = next(item for item in db.rows if isinstance(item, SystemState))
+    monitor.value = {**monitor.value, "last_check": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()}
+    assert worker.https_certificate_health_job(db) == 1
+    assert len(restarts) == 1

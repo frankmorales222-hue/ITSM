@@ -1,4 +1,5 @@
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -195,6 +196,17 @@ class Agent:
         output = (completed.stdout or completed.stderr or "").strip()
         return completed.returncode == 0, output[-900:]
 
+    @staticmethod
+    def _active_interactive_session_id() -> int | None:
+        """Return the Windows console session containing the signed-in user."""
+        if os.name != "nt":
+            return None
+        session_id = int(ctypes.windll.kernel32.WTSGetActiveConsoleSessionId())
+        return None if session_id == 0xFFFFFFFF else session_id
+
+    def inventory_timed_out(self) -> None:
+        event(self.logger, "DEVICE_INVENTORY_TIMEOUT", timeout_seconds=900)
+
     def perform_approved_action(self) -> None:
         try:
             result = self.transport.next_action(self.config.credential)
@@ -218,11 +230,19 @@ class Agent:
                 image_name = os.path.basename(target.strip().strip('"'))
                 if not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.exe", image_name, flags=re.IGNORECASE):
                     raise ValueError("Application name is not allowed")
+                session_id = self._active_interactive_session_id()
+                if session_id is None:
+                    raise RuntimeError("No signed-in user session is available")
                 taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\\Windows"), "System32", "taskkill.exe")
                 if not os.path.isfile(taskkill):
                     taskkill = "taskkill.exe"
-                succeeded, detail = self._run([taskkill, "/F", "/T", "/IM", image_name], 20)
-                summary = detail or (f"Closed {image_name}." if succeeded else f"Could not close {image_name}.")
+                succeeded, detail = self._run([
+                    taskkill, "/F", "/T", "/FI", f"SESSION eq {session_id}",
+                    "/FI", f"IMAGENAME eq {image_name}",
+                ], 20)
+                summary = (detail or f"Closed {image_name}.") if succeeded else (
+                    f"{image_name} is not running for the signed-in user"
+                )
             elif action_type == "restart_service":
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", target):
                     raise ValueError("Service name is not allowed")
@@ -298,7 +318,8 @@ def main(argv=None) -> int:
         event(agent.logger, "AGENT_STARTED", version=__version__)
         scheduler = Scheduler(agent.collect_and_sync, agent.heartbeat,
                               config.full_interval_seconds, config.heartbeat_interval_seconds,
-                              refresh_requested=agent.consume_tray_refresh_request)
+                              refresh_requested=agent.consume_tray_refresh_request,
+                              full_timeout=900, full_timeout_action=agent.inventory_timed_out)
         scheduler.start()
         stop = threading.Event()
         signal.signal(signal.SIGINT, lambda *_: stop.set())

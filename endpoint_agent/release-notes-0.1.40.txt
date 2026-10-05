@@ -1,0 +1,1 @@
+Northstar Endpoint Agent 0.1.40 closes a hung application only in the signed-in user's Windows session, so other users on shared computers and Remote Desktop servers are not interrupted. Support actions and update checks now continue while a full inventory scan is running, and an inventory scan that exceeds 15 minutes is recorded as timed out so the agent can continue operating.

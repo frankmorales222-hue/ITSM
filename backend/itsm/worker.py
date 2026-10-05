@@ -500,6 +500,39 @@ def https_certificate_health_job(db):
     state = read_certificate_state(certificate_api._root())
     if state.get("mode") != "custom":
         return 0
+    root = certificate_api._root()
+    caddyfile = root / "Caddyfile"
+    directive, warning = selected_tls_directive(root)
+
+    # A missing, unreadable, or expired custom certificate is not a transient
+    # listener failure. Fall back immediately, but only change/restart Caddy
+    # when it is not already using the internal certificate. Remember the
+    # warning so the same condition creates one operator alert, not one hourly.
+    if directive == "tls internal":
+        cycled = False
+        try:
+            source = caddyfile.read_text(encoding="utf-8")
+            if not any(line.strip() == "tls internal" for line in source.splitlines()):
+                pending = caddyfile.with_suffix(".pending")
+                pending.write_text(replace_tls_directive(source, directive), encoding="utf-8")
+                os.replace(pending, caddyfile)
+                certificate_api._cycle_https_service()
+                cycled = True
+        except Exception as exc:
+            warning = warning or f"HTTPS certificate fallback failed: {type(exc).__name__}: {str(exc)[:300]}"
+        monitor.value = {
+            **monitor.value,
+            "status": "Needs attention",
+            "consecutive_failures": 0,
+            "last_error": warning,
+            "last_warning": warning,
+        }
+        if warning and warning != previous.get("last_warning"):
+            fail_automation(db, "https_certificate", "Custom HTTPS certificate is not being served",
+                            {"error": warning, "served_fingerprint": "internal"},
+                            related_type="https_certificate", related_id="custom")
+        return 1 if cycled else 0
+
     expected = str(state.get("fingerprint_sha256") or "").upper()
     if not expected:
         try:
@@ -510,28 +543,33 @@ def https_certificate_health_job(db):
         served = certificate_api._served_certificate_fingerprint(timeout_seconds=3)
     except RuntimeError:
         served = ""
-    if expected and served == expected and caddyfile_uses_custom_certificate(certificate_api._root()):
-        monitor.value = {**monitor.value, "status": "Healthy"}
+    if expected and served == expected and caddyfile_uses_custom_certificate(root):
+        monitor.value = {**monitor.value, "status": "Healthy", "consecutive_failures": 0}
         return 0
 
-    root = certificate_api._root()
-    caddyfile = root / "Caddyfile"
+    consecutive_failures = int(previous.get("consecutive_failures") or 0) + 1
+    monitor.value = {
+        **monitor.value,
+        "status": "Check failed",
+        "consecutive_failures": consecutive_failures,
+        "served_fingerprint_sha256": served or None,
+    }
+    if consecutive_failures < 2:
+        return 0
+
     try:
-        directive, warning = selected_tls_directive(root)
         pending = caddyfile.with_suffix(".pending")
         pending.write_text(replace_tls_directive(caddyfile.read_text(encoding="utf-8"), directive), encoding="utf-8")
         os.replace(pending, caddyfile)
-        if directive == "tls internal":
-            certificate_api._cycle_https_service()
-        else:
-            certificate_api._restart_https(state)
+        certificate_api._restart_https(state)
         try:
             served = certificate_api._served_certificate_fingerprint(timeout_seconds=3)
         except RuntimeError:
             served = ""
         healthy = bool(expected and served == expected and caddyfile_uses_custom_certificate(root))
         if healthy:
-            monitor.value = {**monitor.value, "status": "Repaired", "served_fingerprint_sha256": served}
+            monitor.value = {**monitor.value, "status": "Repaired", "consecutive_failures": 0,
+                             "served_fingerprint_sha256": served}
             audit(db, "https_certificate.repaired", "https_certificate", None,
                   new={"served_fingerprint_sha256": served})
             return 1
