@@ -25,6 +25,18 @@ catch { Write-TrayLaunchLog "Startup aborted: tray configuration is invalid."; e
 if (-not $serverUrl) { Write-TrayLaunchLog "Startup aborted: Help Desk URL is missing."; exit 0 }
 
 $sessionId = (Get-Process -Id $PID).SessionId
+$launchMutex = New-Object System.Threading.Mutex($false, "Local\NorthstarEndpointTrayLauncher-$sessionId")
+$launchLockTaken = $false
+try {
+try {
+    $launchLockTaken = $launchMutex.WaitOne([TimeSpan]::FromSeconds(30))
+} catch [System.Threading.AbandonedMutexException] {
+    $launchLockTaken = $true
+}
+if (-not $launchLockTaken) {
+    Write-TrayLaunchLog "Another launcher is already starting the tray in session $sessionId."
+    exit 0
+}
 $trayFullPath = [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $tray).Path)
 $alreadyRunning = @(Get-Process -Name "NorthstarEndpointTray" -ErrorAction SilentlyContinue |
     Where-Object { $_.SessionId -eq $sessionId }
@@ -89,5 +101,9 @@ if ($alreadyRunning.Count -eq 0) {
     }
 } else {
     Write-TrayLaunchLog "Tray process is already running in session $sessionId."
+}
+} finally {
+    if ($launchLockTaken) { $launchMutex.ReleaseMutex() }
+    $launchMutex.Dispose()
 }
 exit 0

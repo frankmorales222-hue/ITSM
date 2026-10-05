@@ -1,5 +1,5 @@
 #define MyAppName "Northstar Endpoint Agent"
-#define MyAppVersion "0.1.37"
+#define MyAppVersion "0.1.38"
 
 [Setup]
 AppId={{6894E363-B668-4F80-9318-405974E3CE20}
@@ -22,12 +22,13 @@ RestartApplications=no
 
 [Files]
 Source: "artifacts\NorthstarEndpointAgent-enterprise\NorthstarEndpointAgent.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
-Source: "artifacts\NorthstarEndpointAgent-enterprise\NorthstarEndpointTray\*"; DestDir: "{app}\NorthstarEndpointTray"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
+Source: "artifacts\NorthstarEndpointAgent-enterprise\NorthstarEndpointTray\*"; DestDir: "{app}\NorthstarEndpointTray"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "assets\northstar.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\install-enterprise.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\uninstall-enterprise.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\install-self-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\launch-tray.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "scripts\install-tray-launcher-task.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\stop-agent-for-upgrade.ps1"; Flags: dontcopy
 
 [Icons]
@@ -38,7 +39,7 @@ Source: "scripts\stop-agent-for-upgrade.ps1"; Flags: dontcopy
 Name: "{commonstartup}\Northstar Endpoint Agent"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\launch-tray.ps1"""; WorkingDir: "{app}"
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\launch-tray.ps1"" -Restart"; WorkingDir: "{app}"; Flags: runhidden waituntilterminated runasoriginaluser
+Filename: "{sys}\schtasks.exe"; Parameters: "/Run /TN ""Northstar Endpoint Tray Launcher"""; WorkingDir: "{app}"; Flags: runhidden waituntilterminated
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\uninstall-enterprise.ps1"" -KeepInstallFiles"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveNorthstarAgentTasks"
@@ -138,6 +139,13 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
+    Parameters := '-NoProfile -ExecutionPolicy Bypass -File ' +
+      AddQuotes(ExpandConstant('{app}\install-tray-launcher-task.ps1'));
+    WizardForm.StatusLabel.Caption := 'Registering the interactive tray launcher...';
+    if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+      RaiseException('Northstar could not register the interactive tray launcher task.');
+
     { A normal update must never read, recreate, or re-enroll the protected
       machine configuration.  Replace only the binaries and restart the task
       already associated with the enrolled endpoint. }

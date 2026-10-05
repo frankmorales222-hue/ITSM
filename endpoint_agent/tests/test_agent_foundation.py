@@ -195,3 +195,48 @@ def test_agent_waits_for_service_to_stop_before_restart(monkeypatch):
         ["sc.exe", "start", "Spooler"],
     ]
     assert transport.result == (8, True, "START_PENDING")
+
+
+def test_system_install_relaunches_tray_through_users_group_task():
+    root = Path(__file__).resolve().parents[1]
+    installer = (root / "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
+    task_installer = (root / "scripts/install-tray-launcher-task.ps1").read_text(encoding="utf-8")
+    tray_launcher = (root / "scripts/launch-tray.ps1").read_text(encoding="utf-8")
+    uninstaller = (root / "scripts/uninstall-enterprise.ps1").read_text(encoding="utf-8")
+    enterprise_builder = (root / "scripts/build-enterprise-package.ps1").read_text(encoding="utf-8")
+
+    tray_file_line = next(line for line in installer.splitlines()
+                          if 'Source: "artifacts\\NorthstarEndpointAgent-enterprise\\NorthstarEndpointTray\\*"' in line)
+    assert "restartreplace" not in tray_file_line.lower()
+    assert "runasoriginaluser" not in installer.lower()
+    assert 'install-tray-launcher-task.ps1' in installer
+    assert '/Run /TN ""Northstar Endpoint Tray Launcher""' in installer
+
+    assert "<GroupId>S-1-5-32-545</GroupId>" in task_installer
+    assert "<RunLevel>LeastPrivilege</RunLevel>" in task_installer
+    assert "<Triggers />" in task_installer
+    assert "-WindowStyle Hidden" in task_installer
+    assert '& $schtasks /Create /TN $TaskName /XML $xmlPath /F' in task_installer
+
+    assert 'Local\\NorthstarEndpointTrayLauncher-$sessionId' in tray_launcher
+    assert 'Where-Object { $_.SessionId -eq $sessionId }' in tray_launcher
+    assert 'Northstar Endpoint Tray Launcher' in uninstaller
+    assert 'install-tray-launcher-task.ps1' in enterprise_builder
+
+
+def test_agent_0138_release_metadata_is_aligned():
+    root = Path(__file__).resolve().parents[1]
+    assert '__version__ = "0.1.38"' in (root /
+        "asset_agent/__init__.py").read_text(encoding="utf-8")
+    assert 'version = "0.1.38"' in (root /
+        "pyproject.toml").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "0.1.38"' in (root /
+        "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
+    notes = (root / "release-notes-0.1.38.txt").read_text(encoding="utf-8")
+    assert "SYSTEM" in notes and "tray" in notes.lower()
+    component_installer = (root.parent / "installer/NorthstarDeskAgentRefresh.iss").read_text(encoding="utf-8")
+    component_builder = (root.parent / "installer/build-agent-refresh-update.ps1").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "0.4.91"' in component_installer
+    assert 'NorthstarEndpointAgent-Setup-0.1.38.exe' in component_installer
+    assert '--version "0.4.91"' in component_builder
+    assert "--component-update" in component_builder

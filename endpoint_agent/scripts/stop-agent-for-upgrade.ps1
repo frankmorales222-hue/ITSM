@@ -1,5 +1,5 @@
 $ErrorActionPreference = "SilentlyContinue"
-$taskNames = @("Northstar Endpoint Agent", "Northstar Endpoint Agent - User Logon Inventory")
+$taskNames = @("Northstar Endpoint Agent", "Northstar Endpoint Agent - User Logon Inventory", "Northstar Endpoint Tray Launcher")
 $processNames = @("NorthstarEndpointAgent", "NorthstarEndpointTray")
 $diagnostic = Join-Path $env:ProgramData "NorthstarEndpointAgent-stop-error.log"
 $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"

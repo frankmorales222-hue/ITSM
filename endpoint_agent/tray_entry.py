@@ -17,7 +17,7 @@ if _build_evidence_target or "--build-evidence" in sys.argv:
     evidence_path.write_text(
         json.dumps(
             {
-        "version": "0.1.37",
+        "version": "0.1.38",
                 "tray_menu_test_notification": True,
                 "release": "agent-toast-menu",
             },

@@ -7,11 +7,14 @@ param(
 $ErrorActionPreference = "Stop"
 $taskName = "Northstar Endpoint Agent"
 $logonTaskName = "Northstar Endpoint Agent - User Logon Inventory"
+$trayLauncherTaskName = "Northstar Endpoint Tray Launcher"
 $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
 & $schtasks /End /TN $taskName 2>$null | Out-Null
 & $schtasks /Delete /TN $taskName /F 2>$null | Out-Null
 & $schtasks /End /TN $logonTaskName 2>$null | Out-Null
 & $schtasks /Delete /TN $logonTaskName /F 2>$null | Out-Null
+& $schtasks /End /TN $trayLauncherTaskName 2>$null | Out-Null
+& $schtasks /Delete /TN $trayLauncherTaskName /F 2>$null | Out-Null
 Get-Process -Name "NorthstarEndpointAgent" -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process -Name "NorthstarEndpointTray" -ErrorAction SilentlyContinue | Stop-Process -Force
 Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "Northstar Endpoint Tray" -ErrorAction SilentlyContinue

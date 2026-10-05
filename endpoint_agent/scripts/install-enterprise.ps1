@@ -20,12 +20,20 @@ $installLog = Join-Path $DataRoot "install-error.log"
 $packagedExecutable = Join-Path $PSScriptRoot "NorthstarEndpointAgent.exe"
 $packagedTrayDirectory = Join-Path $PSScriptRoot "NorthstarEndpointTray"
 $packagedTrayExecutable = Join-Path $packagedTrayDirectory "NorthstarEndpointTray.exe"
+$packagedTrayLauncher = Join-Path $PSScriptRoot "launch-tray.ps1"
+$packagedTrayTaskInstaller = Join-Path $PSScriptRoot "install-tray-launcher-task.ps1"
+$packagedIcon = Join-Path $PSScriptRoot "northstar.ico"
 $sourceExecutable = if ($AgentExecutable) { $AgentExecutable } elseif (Test-Path -LiteralPath $packagedExecutable) { $packagedExecutable } else { Join-Path (Split-Path -Parent $PSScriptRoot) "dist\NorthstarEndpointAgent.exe" }
 if (-not (Test-Path -LiteralPath $sourceExecutable)) {
     throw "NorthstarEndpointAgent.exe was not found. Build the enterprise package first."
 }
 if (-not (Test-Path -LiteralPath $packagedTrayExecutable)) {
     throw "NorthstarEndpointTray runtime was not found. Build the enterprise package first."
+}
+if (-not (Test-Path -LiteralPath $packagedTrayLauncher) -or
+    -not (Test-Path -LiteralPath $packagedTrayTaskInstaller) -or
+    -not (Test-Path -LiteralPath $packagedIcon)) {
+    throw "Northstar tray launcher installation scripts were not found."
 }
 New-Item -ItemType Directory -Force -Path $InstallRoot,$DataRoot | Out-Null
 & icacls.exe $InstallRoot /inheritance:r /grant:r "SYSTEM:(OI)(CI)(F)" "Administrators:(OI)(CI)(F)" "Users:(OI)(CI)(RX)" | Out-Null
@@ -41,6 +49,9 @@ $targetExecutable = Join-Path $InstallRoot "NorthstarEndpointAgent.exe"
 $targetTrayDirectory = Join-Path $InstallRoot "NorthstarEndpointTray"
 $targetTrayExecutable = Join-Path $targetTrayDirectory "NorthstarEndpointTray.exe"
 $trayConfigPath = Join-Path $InstallRoot "tray-config.json"
+$targetTrayLauncher = Join-Path $InstallRoot "launch-tray.ps1"
+$targetTrayTaskInstaller = Join-Path $InstallRoot "install-tray-launcher-task.ps1"
+$targetIcon = Join-Path $InstallRoot "northstar.ico"
 
 # A clean installation has no existing scheduled tasks. schtasks writes that
 # normal "not found" result to stderr; with ErrorActionPreference=Stop,
@@ -66,6 +77,15 @@ if ((Resolve-Path -LiteralPath $sourceExecutable).Path -ne [IO.Path]::GetFullPat
 if ((Resolve-Path -LiteralPath $packagedTrayDirectory).Path -ne [IO.Path]::GetFullPath($targetTrayDirectory)) {
     Remove-Item -LiteralPath $targetTrayDirectory -Recurse -Force -ErrorAction SilentlyContinue
     Copy-Item -LiteralPath $packagedTrayDirectory -Destination $targetTrayDirectory -Recurse -Force
+}
+if ((Resolve-Path -LiteralPath $packagedTrayLauncher).Path -ne [IO.Path]::GetFullPath($targetTrayLauncher)) {
+    Copy-Item -LiteralPath $packagedTrayLauncher -Destination $targetTrayLauncher -Force
+}
+if ((Resolve-Path -LiteralPath $packagedTrayTaskInstaller).Path -ne [IO.Path]::GetFullPath($targetTrayTaskInstaller)) {
+    Copy-Item -LiteralPath $packagedTrayTaskInstaller -Destination $targetTrayTaskInstaller -Force
+}
+if ((Resolve-Path -LiteralPath $packagedIcon).Path -ne [IO.Path]::GetFullPath($targetIcon)) {
+    Copy-Item -LiteralPath $packagedIcon -Destination $targetIcon -Force
 }
 
 $configPath = Join-Path $DataRoot "config.json"
@@ -111,10 +131,19 @@ if (-not (Test-Path -LiteralPath $configPath)) {
 
 @{ server_url = $ServerUrl.TrimEnd('/') } | ConvertTo-Json |
     Set-Content -LiteralPath $trayConfigPath -Encoding UTF8
-# The per-user Startup shortcut installed by Inno is the sole tray launcher.
-# Remove the legacy machine-wide Run value so it cannot race the new launcher
-# or keep an older executable alive after an upgrade.
+# Remove the legacy machine-wide Run value so it cannot race the task/Startup
+# launchers or keep an older executable alive after an upgrade.
 Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "Northstar Endpoint Tray" -ErrorAction SilentlyContinue
+
+$startupFolder = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonStartup)
+$startupShortcut = Join-Path $startupFolder "Northstar Endpoint Agent.lnk"
+$shortcutShell = New-Object -ComObject WScript.Shell
+$shortcut = $shortcutShell.CreateShortcut($startupShortcut)
+$shortcut.TargetPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$shortcut.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $targetTrayLauncher + '"'
+$shortcut.WorkingDirectory = $InstallRoot
+$shortcut.IconLocation = (Join-Path $InstallRoot "northstar.ico") + ",0"
+$shortcut.Save()
 
 function Register-NorthstarTask {
     param([string]$Name, [string]$TriggerXml, [string]$Arguments, [string]$XmlPath)
@@ -144,5 +173,7 @@ Register-NorthstarTask -Name $logonTaskName -TriggerXml '<LogonTrigger><Enabled>
     -Arguments ('--data-dir "' + $escapedDataRoot + '" --once') -XmlPath (Join-Path $env:TEMP "northstar-logon-task.xml")
 & $schtasks /Run /TN $taskName | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Northstar was installed but its startup task could not be started." }
+& $targetTrayTaskInstaller -InstallRoot $InstallRoot
+& $schtasks /Run /TN "Northstar Endpoint Tray Launcher" | Out-Null
 Write-Host "Northstar Endpoint Agent installed for all users and reporting to $ServerUrl"
-Write-Host "The tray companion will start automatically in each user session. Existing sessions receive it at the next sign-in."
+Write-Host "The tray companion was requested for signed-in users and will also start at future sign-ins."

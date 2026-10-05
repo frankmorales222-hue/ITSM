@@ -4,7 +4,7 @@
 ; HTTPS certificates, ports, services, or any existing configuration.
 
 #define MyAppName "Northstar Desk Endpoint Agent Refresh"
-#define MyAppVersion "0.4.83"
+#define MyAppVersion "0.4.91"
 
 [Setup]
 AppId={{EDB93490-5A90-4D53-AEE3-C828C6490340}
@@ -33,4 +33,4 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "..\endpoint_agent\artifacts\NorthstarEndpointAgent-Setup-0.1.31.exe"; DestDir: "{autopf}\Northstar Desk\_internal\agent_installer"; Flags: ignoreversion
+Source: "..\endpoint_agent\artifacts\NorthstarEndpointAgent-Setup-0.1.38.exe"; DestDir: "{autopf}\Northstar Desk\_internal\agent_installer"; Flags: ignoreversion

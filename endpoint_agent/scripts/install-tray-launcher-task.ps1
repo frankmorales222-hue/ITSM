@@ -1,0 +1,48 @@
+[CmdletBinding()]
+param(
+    [string]$TaskName = "Northstar Endpoint Tray Launcher",
+    [string]$InstallRoot = $PSScriptRoot
+)
+
+$ErrorActionPreference = "Stop"
+$launcher = Join-Path $InstallRoot "launch-tray.ps1"
+if (-not (Test-Path -LiteralPath $launcher)) {
+    throw "The Northstar tray launcher was not found: $launcher"
+}
+
+$powerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $launcher + '"'
+$commandXml = [Security.SecurityElement]::Escape($powerShell)
+$argumentsXml = [Security.SecurityElement]::Escape($arguments)
+$workingDirectoryXml = [Security.SecurityElement]::Escape($InstallRoot)
+$taskXml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Author>Northstar Desk</Author><Description>Launches the Northstar Endpoint tray for signed-in users after install or update.</Description></RegistrationInfo>
+  <Triggers />
+  <Principals><Principal id="Users"><GroupId>S-1-5-32-545</GroupId><LogonType>Group</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings><MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT1M</ExecutionTimeLimit><Priority>7</Priority></Settings>
+  <Actions Context="Users"><Exec><Command>$commandXml</Command><Arguments>$argumentsXml</Arguments><WorkingDirectory>$workingDirectoryXml</WorkingDirectory></Exec></Actions>
+</Task>
+"@
+
+# No trigger is registered intentionally. Setup invokes this group-principal
+# task on demand, which starts the tray in signed-in BUILTIN\Users sessions.
+# The Common Startup shortcut remains responsible for future sign-ins.
+$xmlPath = Join-Path $env:TEMP "northstar-tray-launcher-$PID.xml"
+try {
+    Set-Content -LiteralPath $xmlPath -Value $taskXml -Encoding Unicode
+    $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
+    $output = & $schtasks /Create /TN $TaskName /XML $xmlPath /F 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not register '$TaskName': $($output -join ' ')"
+    }
+    $registeredXml = (& $schtasks /Query /TN $TaskName /XML 2>&1) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or
+        $registeredXml -notmatch '<GroupId>S-1-5-32-545</GroupId>' -or
+        $registeredXml -notmatch '<RunLevel>LeastPrivilege</RunLevel>') {
+        throw "The Northstar tray launcher task principal was not registered safely."
+    }
+} finally {
+    Remove-Item -LiteralPath $xmlPath -Force -ErrorAction SilentlyContinue
+}

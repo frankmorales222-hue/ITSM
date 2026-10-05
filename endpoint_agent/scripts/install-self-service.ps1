@@ -71,6 +71,6 @@ try {
     throw
 }
 
-# The elevated installation deliberately does not launch desktop UI. Inno
-# Setup starts launch-tray.ps1 with the original interactive user's token after
-# installation; HKLM Run handles subsequent Windows sign-ins.
+# install-enterprise.ps1 registers and starts the on-demand BUILTIN\Users tray
+# task. Inno invokes the same task after every update, including SYSTEM-driven
+# automatic updates, while the Common Startup shortcut handles future sign-ins.
