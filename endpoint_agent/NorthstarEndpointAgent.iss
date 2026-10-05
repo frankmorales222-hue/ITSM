@@ -1,5 +1,5 @@
 #define MyAppName "Northstar Endpoint Agent"
-#define MyAppVersion "0.1.38"
+#define MyAppVersion "0.1.39"
 
 [Setup]
 AppId={{6894E363-B668-4F80-9318-405974E3CE20}
@@ -29,6 +29,7 @@ Source: "scripts\uninstall-enterprise.ps1"; DestDir: "{app}"; Flags: ignoreversi
 Source: "scripts\install-self-service.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\launch-tray.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\install-tray-launcher-task.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "scripts\migrate-legacy-x86-install.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "scripts\stop-agent-for-upgrade.ps1"; Flags: dontcopy
 
 [Icons]
@@ -145,6 +146,14 @@ begin
     if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
       ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
       RaiseException('Northstar could not register the interactive tray launcher task.');
+
+    Parameters := '-NoProfile -ExecutionPolicy Bypass -File ' +
+      AddQuotes(ExpandConstant('{app}\migrate-legacy-x86-install.ps1')) + ' -InstallRoot ' +
+      AddQuotes(ExpandConstant('{app}'));
+    WizardForm.StatusLabel.Caption := 'Migrating any legacy 32-bit endpoint agent installation...';
+    if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+      RaiseException('Northstar could not safely migrate the legacy 32-bit endpoint agent installation.');
 
     { A normal update must never read, recreate, or re-enroll the protected
       machine configuration.  Replace only the binaries and restart the task

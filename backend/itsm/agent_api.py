@@ -32,6 +32,28 @@ from .security import STAFF_ROLES, current_user, get_current_session, require_ro
 from .services import audit, notify
 
 router = APIRouter(prefix="/api")
+CURRENT_ENDPOINT_AGENT_VERSION = "0.1.39"
+AGENT_CHECK_IN_GRACE = timedelta(minutes=5)
+
+
+def _agent_release_state(agent: EndpointAgent) -> dict[str, Any]:
+    """Return display-safe currency and check-in flags for endpoint UIs."""
+    def numeric_version(value: str | None) -> tuple[int, ...] | None:
+        match = re.fullmatch(r"\s*(\d+(?:\.\d+)*)\s*", value or "")
+        return tuple(int(part) for part in match.group(1).split(".")) if match else None
+
+    reported = numeric_version(agent.agent_version)
+    current = numeric_version(CURRENT_ENDPOINT_AGENT_VERSION)
+    width = max(len(reported or ()), len(current or ()))
+    is_outdated = reported is None or tuple(reported) + (0,) * (width - len(reported)) < tuple(current) + (0,) * (width - len(current))
+    last_seen = _aware(agent.last_seen_at) if agent.last_seen_at else None
+    return {
+        "agent_version": agent.agent_version,
+        "current_agent_version": CURRENT_ENDPOINT_AGENT_VERSION,
+        "is_outdated": is_outdated,
+        "check_in_overdue": last_seen is None or now() - last_seen > AGENT_CHECK_IN_GRACE,
+        "last_seen_at": agent.last_seen_at,
+    }
 
 
 def _caddy_root_ca_material(url: str) -> tuple[str, str]:
@@ -310,7 +332,7 @@ def _agent_device_summary(db: Session, agent: EndpointAgent | None) -> dict | No
     return {
         "hostname": agent.hostname or device.get("hostname") or "This computer",
         "status": agent.status,
-        "last_seen_at": agent.last_seen_at,
+        **_agent_release_state(agent),
         "cpu_percent": cpu.get("utilization_percent"),
         "memory_percent": memory.get("percent_used"),
         "operating_system": operating_system.get("edition"),
@@ -1203,7 +1225,7 @@ def ingest_inventory(payload: InventoryIn, request: Request, agent: EndpointAgen
 def list_agents(user: User = Depends(require_roles(Role.ADMIN, Role.MANAGER)), db: Session = Depends(get_db)):
     rows = db.scalars(select(EndpointAgent).order_by(EndpointAgent.last_seen_at.desc())).all()
     return [{"id": item.id, "asset_id": item.asset_id, "device_id_suffix": item.device_id[-8:],
-             "hostname": item.hostname, "agent_version": item.agent_version, "schema_version": item.schema_version,
+             "hostname": item.hostname, **_agent_release_state(item), "schema_version": item.schema_version,
              "status": "Revoked" if item.revoked_at else item.status, "last_seen_at": item.last_seen_at,
              "last_inventory_at": item.last_inventory_at, "observed_user_email": item.observed_user_email,
              "observed_user": item.observed_user, "assignment_state": item.assignment_state,

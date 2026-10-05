@@ -33,4 +33,4 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "..\endpoint_agent\artifacts\NorthstarEndpointAgent-Setup-0.1.38.exe"; DestDir: "{autopf}\Northstar Desk\_internal\agent_installer"; Flags: ignoreversion
+Source: "..\endpoint_agent\artifacts\NorthstarEndpointAgent-Setup-0.1.39.exe"; DestDir: "{autopf}\Northstar Desk\_internal\agent_installer"; Flags: ignoreversion

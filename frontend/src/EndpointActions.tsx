@@ -12,7 +12,7 @@ export function TicketEndpointSummary({ticket}:{ticket:Props['ticket']}){
  if(!agent)return <div className="ticket-endpoint-summary"><span>ASSET INFORMATION</span><strong>No linked endpoint</strong><small>An endpoint agent has not reported for this requester.</small></div>
  const cpu=agent.cpu_percent===null||agent.cpu_percent===undefined?'Not reported':`${agent.cpu_percent}%`
  const memory=agent.memory_percent===null||agent.memory_percent===undefined?'Not reported':`${agent.memory_percent}%`
- return <div className="ticket-endpoint-summary"><span>ASSET INFORMATION</span><strong>{agent.hostname||'Endpoint reported'}</strong><small>CPU {cpu} · Memory {memory}</small><small>{agent.operating_system||'Operating system not reported'}{agent.os_version?` (${agent.os_version})`:''}</small></div>
+ return <div className="ticket-endpoint-summary"><span>ASSET INFORMATION</span><strong>{agent.hostname||'Endpoint reported'}</strong><small>CPU {cpu} · Memory {memory}</small><small>{agent.operating_system||'Operating system not reported'}{agent.os_version?` (${agent.os_version})`:''}</small><small>Agent {agent.agent_version||'unknown'} · Last check-in {agent.last_seen_at?new Date(agent.last_seen_at).toLocaleString():'never'}</small>{(agent.is_outdated||agent.check_in_overdue)&&<small className="endpoint-agent-warning">{[agent.is_outdated?`Update needed (current ${agent.current_agent_version})`:'',agent.check_in_overdue?'No check-in for more than 5 minutes':''].filter(Boolean).join(' · ')}</small>}</div>
 }
 
 export function EndpointActions({ticket,user}:Props){

@@ -48,7 +48,7 @@ if ($CertificateThumbprint) {
 }
 Copy-Item -LiteralPath $exe -Destination $OutputDirectory -Force
 Copy-Item -LiteralPath $trayDirectory -Destination (Join-Path $OutputDirectory "NorthstarEndpointTray") -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-enterprise.ps1"),(Join-Path $PSScriptRoot "install-enterprise.cmd"),(Join-Path $PSScriptRoot "uninstall-enterprise.ps1"),(Join-Path $PSScriptRoot "uninstall-enterprise.cmd"),(Join-Path $PSScriptRoot "launch-tray.ps1"),(Join-Path $PSScriptRoot "install-tray-launcher-task.ps1") -Destination $OutputDirectory -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-enterprise.ps1"),(Join-Path $PSScriptRoot "install-enterprise.cmd"),(Join-Path $PSScriptRoot "uninstall-enterprise.ps1"),(Join-Path $PSScriptRoot "uninstall-enterprise.cmd"),(Join-Path $PSScriptRoot "launch-tray.ps1"),(Join-Path $PSScriptRoot "install-tray-launcher-task.ps1"),(Join-Path $PSScriptRoot "migrate-legacy-x86-install.ps1") -Destination $OutputDirectory -Force
 Copy-Item -LiteralPath $iconPath -Destination $OutputDirectory -Force
 $zip = "$OutputDirectory.zip"
 Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue

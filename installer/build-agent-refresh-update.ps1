@@ -10,7 +10,7 @@ $compiler = @(
 ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $compiler) { throw "Inno Setup 6 compiler is not installed." }
 
-$agent = Join-Path $projectRoot "endpoint_agent\artifacts\NorthstarEndpointAgent-Setup-0.1.38.exe"
+$agent = Join-Path $projectRoot "endpoint_agent\artifacts\NorthstarEndpointAgent-Setup-0.1.39.exe"
 if (-not (Test-Path -LiteralPath $agent)) { throw "The endpoint agent installer is missing: $agent" }
 
 Push-Location $installerRoot
@@ -23,7 +23,7 @@ finally { Pop-Location }
 $payload = Join-Path $installerRoot "artifacts\NorthstarDesk-Agent-Refresh-Update-0.4.91.exe"
 $privateKey = Join-Path $installerRoot "signing\private\northstar.update-private.pem"
 $passwordFile = Join-Path $installerRoot "signing\private\northstar.update-private.password.txt"
-$notes = "Endpoint-agent only: ships Endpoint Agent 0.1.38. The tray now returns to signed-in users after manual, automatic, Intune, and RMM updates launched as SYSTEM, without requiring sign-out or restart. The installer preserves endpoint enrollment and configuration and does not modify the Northstar Desk database, tickets, authentication, routing, email, HTTPS certificates, Caddy configuration, ports, or services."
+$notes = "Endpoint-agent only: ships Endpoint Agent 0.1.39. The tray returns to signed-in users after SYSTEM updates, and upgrades from the legacy 32-bit installation now repoint both scheduled tasks before safely removing only the old x86 files and uninstall entry. Endpoint enrollment and ProgramData configuration are preserved."
 & (Join-Path $projectRoot ".venv\Scripts\python.exe") (Join-Path $installerRoot "update-package.py") build `
   --private-key $privateKey --password-file $passwordFile --payload $payload `
   --version "0.4.91" --publisher "Northstar" --release-notes $notes `

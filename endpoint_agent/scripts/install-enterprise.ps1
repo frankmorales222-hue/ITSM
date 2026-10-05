@@ -22,6 +22,7 @@ $packagedTrayDirectory = Join-Path $PSScriptRoot "NorthstarEndpointTray"
 $packagedTrayExecutable = Join-Path $packagedTrayDirectory "NorthstarEndpointTray.exe"
 $packagedTrayLauncher = Join-Path $PSScriptRoot "launch-tray.ps1"
 $packagedTrayTaskInstaller = Join-Path $PSScriptRoot "install-tray-launcher-task.ps1"
+$packagedLegacyMigration = Join-Path $PSScriptRoot "migrate-legacy-x86-install.ps1"
 $packagedIcon = Join-Path $PSScriptRoot "northstar.ico"
 $sourceExecutable = if ($AgentExecutable) { $AgentExecutable } elseif (Test-Path -LiteralPath $packagedExecutable) { $packagedExecutable } else { Join-Path (Split-Path -Parent $PSScriptRoot) "dist\NorthstarEndpointAgent.exe" }
 if (-not (Test-Path -LiteralPath $sourceExecutable)) {
@@ -32,6 +33,7 @@ if (-not (Test-Path -LiteralPath $packagedTrayExecutable)) {
 }
 if (-not (Test-Path -LiteralPath $packagedTrayLauncher) -or
     -not (Test-Path -LiteralPath $packagedTrayTaskInstaller) -or
+    -not (Test-Path -LiteralPath $packagedLegacyMigration) -or
     -not (Test-Path -LiteralPath $packagedIcon)) {
     throw "Northstar tray launcher installation scripts were not found."
 }
@@ -51,6 +53,7 @@ $targetTrayExecutable = Join-Path $targetTrayDirectory "NorthstarEndpointTray.ex
 $trayConfigPath = Join-Path $InstallRoot "tray-config.json"
 $targetTrayLauncher = Join-Path $InstallRoot "launch-tray.ps1"
 $targetTrayTaskInstaller = Join-Path $InstallRoot "install-tray-launcher-task.ps1"
+$targetLegacyMigration = Join-Path $InstallRoot "migrate-legacy-x86-install.ps1"
 $targetIcon = Join-Path $InstallRoot "northstar.ico"
 
 # A clean installation has no existing scheduled tasks. schtasks writes that
@@ -83,6 +86,9 @@ if ((Resolve-Path -LiteralPath $packagedTrayLauncher).Path -ne [IO.Path]::GetFul
 }
 if ((Resolve-Path -LiteralPath $packagedTrayTaskInstaller).Path -ne [IO.Path]::GetFullPath($targetTrayTaskInstaller)) {
     Copy-Item -LiteralPath $packagedTrayTaskInstaller -Destination $targetTrayTaskInstaller -Force
+}
+if ((Resolve-Path -LiteralPath $packagedLegacyMigration).Path -ne [IO.Path]::GetFullPath($targetLegacyMigration)) {
+    Copy-Item -LiteralPath $packagedLegacyMigration -Destination $targetLegacyMigration -Force
 }
 if ((Resolve-Path -LiteralPath $packagedIcon).Path -ne [IO.Path]::GetFullPath($targetIcon)) {
     Copy-Item -LiteralPath $packagedIcon -Destination $targetIcon -Force
@@ -173,6 +179,7 @@ Register-NorthstarTask -Name $logonTaskName -TriggerXml '<LogonTrigger><Enabled>
     -Arguments ('--data-dir "' + $escapedDataRoot + '" --once') -XmlPath (Join-Path $env:TEMP "northstar-logon-task.xml")
 & $schtasks /Run /TN $taskName | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Northstar was installed but its startup task could not be started." }
+& $targetLegacyMigration -InstallRoot $InstallRoot
 & $targetTrayTaskInstaller -InstallRoot $InstallRoot
 & $schtasks /Run /TN "Northstar Endpoint Tray Launcher" | Out-Null
 Write-Host "Northstar Endpoint Agent installed for all users and reporting to $ServerUrl"
