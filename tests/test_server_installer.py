@@ -1,11 +1,34 @@
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
+import json
 import os
 import re
 
 import pytest
 import sqlalchemy
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from installer import server_entry
+
+
+def _write_custom_certificate(root: Path, expires_in_days: int = 30) -> None:
+    certificate_dir = root / "certificates"
+    certificate_dir.mkdir(parents=True)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "desk.example.test")])
+    certificate = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                   .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                   .not_valid_before(datetime.now(timezone.utc) - timedelta(days=1))
+                   .not_valid_after(datetime.now(timezone.utc) + timedelta(days=expires_in_days))
+                   .sign(key, hashes.SHA256()))
+    (certificate_dir / "fullchain.pem").write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    (certificate_dir / "privatekey.pem").write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()))
+    (certificate_dir / "status.json").write_text(json.dumps({"mode": "custom"}), encoding="utf-8")
 
 
 def test_postgresql_alembic_version_column_fits_every_revision():
@@ -203,6 +226,55 @@ def test_existing_install_ports_can_change_without_rotating_secret(tmp_path):
     assert "ITSM_PORT=8011" in northstar
     assert "ITSM_ASSETPILOT_PORT=5080" in northstar
     assert "ITSM_ASSETPILOT_INTERNAL_URL=http://127.0.0.1:5080" in northstar
+    assert "tls internal" in (tmp_path / "Caddyfile").read_text(encoding="utf-8")
+
+
+def test_configure_ports_preserves_valid_custom_certificate(tmp_path):
+    (tmp_path / ".env").write_text(
+        "ITSM_SECRET_KEY=keep-this-key\nITSM_PUBLIC_URL=https://desk.example.test\n"
+        "ITSM_PORT=8000\nITSM_HTTPS_PORT=443\n",
+        encoding="utf-8",
+    )
+    _write_custom_certificate(tmp_path)
+
+    server_entry.configure_service_ports(tmp_path, 8443, 8011, 5081)
+
+    caddy = (tmp_path / "Caddyfile").read_text(encoding="utf-8")
+    certificate = str((tmp_path / "certificates" / "fullchain.pem").resolve()).replace("\\", "/")
+    private_key = str((tmp_path / "certificates" / "privatekey.pem").resolve()).replace("\\", "/")
+    assert f'tls "{certificate}" "{private_key}"' in caddy
+    assert "tls internal" not in caddy
+
+
+def test_configure_ports_falls_back_when_custom_files_are_missing(tmp_path):
+    (tmp_path / ".env").write_text(
+        "ITSM_SECRET_KEY=keep-this-key\nITSM_PUBLIC_URL=https://desk.example.test\n"
+        "ITSM_PORT=8000\nITSM_HTTPS_PORT=443\n",
+        encoding="utf-8",
+    )
+    certificate_dir = tmp_path / "certificates"
+    certificate_dir.mkdir()
+    (certificate_dir / "status.json").write_text('{"mode":"custom"}', encoding="utf-8")
+
+    server_entry.configure_service_ports(tmp_path, 8443, 8011, 5081)
+
+    assert "tls internal" in (tmp_path / "Caddyfile").read_text(encoding="utf-8")
+    warning = (tmp_path / "setup-error.log").read_text(encoding="utf-8")
+    assert "WARNING" in warning and "missing" in warning
+
+
+def test_configure_ports_falls_back_when_custom_certificate_is_expired(tmp_path):
+    (tmp_path / ".env").write_text(
+        "ITSM_SECRET_KEY=keep-this-key\nITSM_PUBLIC_URL=https://desk.example.test\n"
+        "ITSM_PORT=8000\nITSM_HTTPS_PORT=443\n",
+        encoding="utf-8",
+    )
+    _write_custom_certificate(tmp_path, expires_in_days=-1)
+
+    server_entry.configure_service_ports(tmp_path, 8443, 8011, 5081)
+
+    assert "tls internal" in (tmp_path / "Caddyfile").read_text(encoding="utf-8")
+    assert "expired" in (tmp_path / "setup-error.log").read_text(encoding="utf-8")
 
 
 def test_upgrade_replaces_legacy_loopback_public_addresses(tmp_path):

@@ -26,6 +26,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .caddy_tls import (caddyfile_uses_custom_certificate, certificate_paths,
+                        custom_tls_directive, installed_certificate_fingerprint,
+                        replace_tls_directive)
 from .database import get_db
 from .models import Role, User
 from .security import require_roles
@@ -221,17 +224,11 @@ def _caddy_binary() -> Path:
     raise HTTPException(500, "The Northstar HTTPS service executable was not found. Use the server installation, not a development copy, to install a certificate.")
 
 
-def _caddy_path(path: Path) -> str:
-    return str(path.resolve()).replace("\\", "/")
-
-
 def _custom_caddyfile(source: str, certificate: Path, key: Path) -> str:
-    lines = source.splitlines()
-    matches = [index for index, line in enumerate(lines) if line.strip().startswith("tls ")]
-    if len(matches) != 1:
+    try:
+        return replace_tls_directive(source, custom_tls_directive(certificate, key))
+    except ValueError:
         raise HTTPException(400, "Northstar could not safely identify the HTTPS certificate setting. Keep the existing Caddyfile unchanged and contact support.")
-    lines[matches[0]] = f'    tls "{_caddy_path(certificate)}" "{_caddy_path(key)}"'
-    return "\n".join(lines) + "\n"
 
 
 def _validate_caddy(candidate: Path) -> None:
@@ -266,7 +263,8 @@ def _served_certificate_fingerprint(timeout_seconds: int = 25) -> str:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            with socket.create_connection(("127.0.0.1", _https_port()), timeout=3) as connection:
+            remaining = max(0.1, deadline - time.monotonic())
+            with socket.create_connection(("127.0.0.1", _https_port()), timeout=min(3, remaining)) as connection:
                 context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
@@ -275,8 +273,17 @@ def _served_certificate_fingerprint(timeout_seconds: int = 25) -> str:
                     return certificate.fingerprint(hashes.SHA256()).hex().upper()
         except (OSError, ssl.SSLError, ValueError) as exc:
             last_error = exc
-            time.sleep(1)
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
     raise RuntimeError(f"Northstar HTTPS did not present a certificate on local port {_https_port()}: {last_error}")
+
+
+def _cycle_https_service() -> None:
+    subprocess.run(["schtasks.exe", "/End", "/TN", "Northstar HTTPS"], capture_output=True, text=True, timeout=20)
+    subprocess.run(["taskkill.exe", "/F", "/IM", "caddy.exe"], capture_output=True, text=True, timeout=20)
+    time.sleep(1)
+    result = subprocess.run(["schtasks.exe", "/Run", "/TN", "Northstar HTTPS"], capture_output=True, text=True, timeout=20)
+    if result.returncode:
+        raise RuntimeError((result.stderr or result.stdout or "Unable to start Northstar HTTPS").strip())
 
 
 def _restart_https(state: dict) -> None:
@@ -284,12 +291,7 @@ def _restart_https(state: dict) -> None:
         # Caddy is dedicated to Northstar Desk.  Ending only the scheduled task
         # can leave its child listener alive, which caused an old certificate to
         # continue being served after the UI reported a successful restart.
-        subprocess.run(["schtasks.exe", "/End", "/TN", "Northstar HTTPS"], capture_output=True, text=True, timeout=20)
-        subprocess.run(["taskkill.exe", "/F", "/IM", "caddy.exe"], capture_output=True, text=True, timeout=20)
-        time.sleep(1)
-        result = subprocess.run(["schtasks.exe", "/Run", "/TN", "Northstar HTTPS"], capture_output=True, text=True, timeout=20)
-        if result.returncode:
-            raise RuntimeError((result.stderr or result.stdout or "Unable to start Northstar HTTPS").strip())
+        _cycle_https_service()
         served = _served_certificate_fingerprint()
         if served != state["fingerprint_sha256"]:
             raise RuntimeError("Northstar HTTPS started but is still presenting a different certificate. The previous browser-trusted certificate setting was not reported as successful.")
@@ -303,7 +305,27 @@ def _restart_https(state: dict) -> None:
 def certificate_status(user: User = Depends(require_roles(Role.ADMIN))):
     state = _read_state()
     state["hostname"] = state.get("hostname") or _public_hostname()
-    state["certificate_installed"] = bool((_certificate_directory() / "fullchain.pem").is_file() and (_certificate_directory() / "privatekey.pem").is_file())
+    certificate, private_key = certificate_paths(_root())
+    state["certificate_installed"] = bool(certificate.is_file() and private_key.is_file())
+    state["caddyfile_serves_custom"] = caddyfile_uses_custom_certificate(_root())
+    state["needs_attention"] = False
+    expected_fingerprint = str(state.get("fingerprint_sha256") or "").upper()
+    try:
+        if certificate.is_file():
+            expected_fingerprint = installed_certificate_fingerprint(certificate)
+            state["installed_fingerprint_sha256"] = expected_fingerprint
+    except (OSError, ValueError):
+        pass
+    try:
+        state["live_served_fingerprint_sha256"] = _served_certificate_fingerprint(timeout_seconds=2)
+    except RuntimeError as exc:
+        state["live_served_fingerprint_sha256"] = None
+        state["live_listener_error"] = str(exc)
+    if state.get("mode") == "custom":
+        live_matches = bool(expected_fingerprint and state.get("live_served_fingerprint_sha256") == expected_fingerprint)
+        if not state["certificate_installed"] or not state["caddyfile_serves_custom"] or not live_matches:
+            state["status"] = "Custom certificate is installed but NOT being served"
+            state["needs_attention"] = True
     return state
 
 

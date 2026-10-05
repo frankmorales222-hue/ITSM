@@ -1,0 +1,1 @@
+HTTPS certificates installed from the admin page are now kept across server updates, and the admin page warns if the live HTTPS service isn't presenting the installed certificate.

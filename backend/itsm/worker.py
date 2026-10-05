@@ -31,6 +31,7 @@ from .self_service import evaluate_ticket, record_email_outcome, return_unanswer
 
 
 _MAIL_MAX_ATTEMPTS = 3
+_HTTPS_CERTIFICATE_CHECK_INTERVAL = timedelta(hours=1)
 
 
 def _mail_retry_key(graph_message_id: str) -> str:
@@ -473,6 +474,79 @@ def smart_self_service_all_organizations():
     return evaluated
 
 
+def https_certificate_health_job(db):
+    """Hourly repair for a custom certificate that Caddy is not serving."""
+    monitor = db.get(SystemState, "https_certificate_monitor") or SystemState(
+        key="https_certificate_monitor", value={}
+    )
+    db.add(monitor)
+    previous = dict(monitor.value or {})
+    checked_at = now()
+    try:
+        last_check = datetime.fromisoformat(str(previous.get("last_check") or "").replace("Z", "+00:00"))
+        if last_check.tzinfo is None:
+            last_check = last_check.replace(tzinfo=checked_at.tzinfo)
+        if checked_at - last_check < _HTTPS_CERTIFICATE_CHECK_INTERVAL:
+            return 0
+    except (TypeError, ValueError):
+        pass
+    monitor.value = {**previous, "last_check": checked_at.isoformat(), "status": "Checked"}
+
+    from . import certificate_api
+    from .caddy_tls import (caddyfile_uses_custom_certificate, certificate_paths,
+                            installed_certificate_fingerprint, read_certificate_state,
+                            replace_tls_directive, selected_tls_directive)
+
+    state = read_certificate_state(certificate_api._root())
+    if state.get("mode") != "custom":
+        return 0
+    expected = str(state.get("fingerprint_sha256") or "").upper()
+    if not expected:
+        try:
+            expected = installed_certificate_fingerprint(certificate_paths(certificate_api._root())[0])
+        except (OSError, ValueError):
+            expected = ""
+    try:
+        served = certificate_api._served_certificate_fingerprint(timeout_seconds=3)
+    except RuntimeError:
+        served = ""
+    if expected and served == expected and caddyfile_uses_custom_certificate(certificate_api._root()):
+        monitor.value = {**monitor.value, "status": "Healthy"}
+        return 0
+
+    root = certificate_api._root()
+    caddyfile = root / "Caddyfile"
+    try:
+        directive, warning = selected_tls_directive(root)
+        pending = caddyfile.with_suffix(".pending")
+        pending.write_text(replace_tls_directive(caddyfile.read_text(encoding="utf-8"), directive), encoding="utf-8")
+        os.replace(pending, caddyfile)
+        if directive == "tls internal":
+            certificate_api._cycle_https_service()
+        else:
+            certificate_api._restart_https(state)
+        try:
+            served = certificate_api._served_certificate_fingerprint(timeout_seconds=3)
+        except RuntimeError:
+            served = ""
+        healthy = bool(expected and served == expected and caddyfile_uses_custom_certificate(root))
+        if healthy:
+            monitor.value = {**monitor.value, "status": "Repaired", "served_fingerprint_sha256": served}
+            audit(db, "https_certificate.repaired", "https_certificate", None,
+                  new={"served_fingerprint_sha256": served})
+            return 1
+        reason = warning or "The live HTTPS listener still presents a different certificate after repair."
+    except Exception as exc:
+        reason = f"HTTPS certificate repair failed: {type(exc).__name__}: {str(exc)[:300]}"
+
+    monitor.value = {**monitor.value, "status": "Needs attention", "last_error": reason}
+    fail_automation(db, "https_certificate", "Custom HTTPS certificate is not being served",
+                    {"error": reason, "expected_fingerprint": expected,
+                     "served_fingerprint": served or "unavailable"},
+                    related_type="https_certificate", related_id="custom")
+    return 0
+
+
 def run_once():
     db=SessionLocal(); organization_id=db.scalar(select(Organization.id).where(Organization.active.is_(True)).order_by(Organization.id).limit(1))
     if organization_id: db.info["organization_id"]=organization_id
@@ -482,6 +556,7 @@ def run_once():
         sla_job(db)
         retained = custom_field_retention_job(db)
         self_service_evaluated = smart_self_service_all_organizations()
+        certificate_repairs = https_certificate_health_job(db)
         processed = microsoft_mailbox_job(db)
         delivered = email_notification_job(db)
         host=os.getenv("ITSM_IMAP_HOST")
@@ -495,7 +570,7 @@ def run_once():
                 for message_no in ids[0].split():
                     _,data=client.fetch(message_no,"(RFC822)");process_message(db,data[0][1]);client.store(message_no,"+FLAGS","\\Seen");processed+=1
                 mail=db.get(SystemState,"mailbox") or SystemState(key="mailbox",value={});mail.value={"status":"Connected","last_check":now().isoformat(),"messages_processed":processed};db.add(mail)
-        state.value={"status":"Ready","last_heartbeat":now().isoformat(),"scheduled_jobs":"healthy","emails_received":processed,"emails_delivered":delivered,"retained_fields_removed":retained,"assetpilot_assets_seen":synchronized_assets,"self_service_evaluated":self_service_evaluated};db.commit()
+        state.value={"status":"Ready","last_heartbeat":now().isoformat(),"scheduled_jobs":"healthy","emails_received":processed,"emails_delivered":delivered,"retained_fields_removed":retained,"assetpilot_assets_seen":synchronized_assets,"self_service_evaluated":self_service_evaluated,"https_certificate_repairs":certificate_repairs};db.commit()
     except Exception as exc:
         db.rollback();fail_automation(db,"worker","Background worker run failed",{"error":str(exc)[:500]});state=db.get(SystemState,"worker") or SystemState(key="worker",value={});state.value={"status":"Error","last_heartbeat":now().isoformat()};db.add(state);db.commit()
     finally:db.close()
