@@ -2,8 +2,11 @@ from email.message import EmailMessage
 from pathlib import Path
 from types import SimpleNamespace
 
+from sqlalchemy import delete, select
+
 from itsm import microsoft_mail, worker
-from itsm.models import IntegrationConnection
+from itsm.database import SessionLocal
+from itsm.models import AutomationFailure, EmailMessage as StoredEmailMessage, IntegrationConnection, IntegrationLog, Organization, SystemState
 
 
 class _Response:
@@ -88,3 +91,92 @@ def test_inbound_outlook_cid_is_removed_and_image_is_saved(monkeypatch):
             (test_root / "attachments").rmdir()
         if test_root.exists():
             test_root.rmdir()
+
+
+def test_mailbox_message_is_atomic_retried_and_then_skipped(monkeypatch):
+    graph_id = "graph-atomic-retry-test"
+    internet_id = "<atomic-retry@example.test>"
+    calls = {"mime": 0, "process": 0}
+    with SessionLocal() as db:
+        organization_id = db.scalar(select(Organization.id).order_by(Organization.id))
+        db.info["organization_id"] = organization_id
+        connection = IntegrationConnection(
+            organization_id=organization_id, name="Atomic mailbox test", kind="email",
+            provider="Microsoft 365", enabled=True, status="Connected",
+            configuration={"mailbox":"helpdesk@example.test"},
+        )
+        db.add(connection); db.commit()
+        monkeypatch.setattr(worker, "connected_mailbox", lambda _db: connection)
+        monkeypatch.setattr(worker, "unread_messages", lambda *_args: [
+            {"id": graph_id, "internetMessageId": internet_id}
+        ])
+        def mime(*_args):
+            calls["mime"] += 1
+            return b"raw"
+        monkeypatch.setattr(worker, "message_mime", mime)
+        monkeypatch.setattr(worker, "mark_read", lambda *_args: None)
+        def process(target_db, _raw):
+            calls["process"] += 1
+            target_db.add(StoredEmailMessage(
+                organization_id=organization_id, message_id=internet_id,
+                sender="requester@example.test", subject="Atomic test",
+                attachment_metadata=[], processing_status="created",
+            ))
+            target_db.flush()
+            if calls["process"] == 1:
+                raise RuntimeError("fail after partial persistence")
+            return "created"
+        monkeypatch.setattr(worker, "process_message", process)
+
+        assert worker.microsoft_mailbox_job(db) == 0
+        assert db.scalar(select(StoredEmailMessage).where(
+            StoredEmailMessage.message_id == internet_id)) is None
+        assert worker.microsoft_mailbox_job(db) == 1
+        assert db.scalar(select(StoredEmailMessage).where(
+            StoredEmailMessage.message_id == internet_id)) is not None
+        assert worker.microsoft_mailbox_job(db) == 0
+        assert calls == {"mime": 2, "process": 2}
+
+        db.execute(delete(StoredEmailMessage).where(StoredEmailMessage.message_id == internet_id))
+        db.execute(delete(SystemState).where(SystemState.key == worker._mail_retry_key(graph_id)))
+        db.execute(delete(AutomationFailure).where(
+            AutomationFailure.failure_type == "microsoft_mailbox",
+            AutomationFailure.related_id == str(connection.id),
+        ))
+        db.execute(delete(IntegrationLog).where(IntegrationLog.connection_id == connection.id))
+        db.delete(connection); db.commit()
+
+
+def test_mailbox_stops_after_three_failures_for_manual_review(monkeypatch):
+    graph_id = "graph-manual-review-test"
+    mime_calls = []
+    with SessionLocal() as db:
+        organization_id = db.scalar(select(Organization.id).order_by(Organization.id))
+        db.info["organization_id"] = organization_id
+        connection = IntegrationConnection(
+            organization_id=organization_id, name="Manual review mailbox test", kind="email",
+            provider="Microsoft 365", enabled=True, status="Connected",
+            configuration={"mailbox":"helpdesk@example.test"},
+        )
+        db.add(connection); db.commit()
+        monkeypatch.setattr(worker, "connected_mailbox", lambda _db: connection)
+        monkeypatch.setattr(worker, "unread_messages", lambda *_args: [
+            {"id": graph_id, "internetMessageId": "<manual-review@example.test>"}
+        ])
+        monkeypatch.setattr(worker, "message_mime", lambda *_args: mime_calls.append(graph_id) or b"raw")
+        monkeypatch.setattr(worker, "process_message", lambda *_args: (_ for _ in ()).throw(RuntimeError("broken")))
+
+        for _ in range(4):
+            assert worker.microsoft_mailbox_job(db) == 0
+        state = db.get(SystemState, worker._mail_retry_key(graph_id))
+        assert state.value["attempts"] == 3
+        assert state.value["status"] == "manual_review"
+        assert len(mime_calls) == 3
+
+        db.execute(delete(SystemState).where(SystemState.key == worker._mail_retry_key(graph_id)))
+        db.execute(delete(AutomationFailure).where(
+            AutomationFailure.failure_type == "microsoft_mailbox",
+            AutomationFailure.related_id == str(connection.id),
+        ))
+        db.execute(delete(IntegrationLog).where(IntegrationLog.connection_id == connection.id))
+        db.delete(connection); db.commit()

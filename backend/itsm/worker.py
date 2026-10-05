@@ -4,6 +4,7 @@ Mailbox passwords are read from Windows Credential Manager through keyring. Run
 scripts/configure-mail-secret.ps1 once, then set the non-secret IMAP variables.
 """
 import email
+import hashlib
 import imaplib
 import os
 import re
@@ -27,6 +28,24 @@ from .assetpilot import ensure_asset_employee_user, import_assetpilot
 from .identity import provision_end_user
 from .microsoft_mail import connected_mailbox, mailbox_address, mark_read, message_mime, send_notification, unread_messages
 from .self_service import evaluate_ticket, record_email_outcome, return_unanswered_to_it
+
+
+_MAIL_MAX_ATTEMPTS = 3
+
+
+def _mail_retry_key(graph_message_id: str) -> str:
+    digest = hashlib.sha256(graph_message_id.encode("utf-8")).hexdigest()
+    return f"mail_retry:{digest}"
+
+
+def _mail_retry_state(db, graph_message_id: str) -> SystemState | None:
+    return db.get(SystemState, _mail_retry_key(graph_message_id))
+
+
+def _message_already_processed(db, item: dict) -> bool:
+    message_id = str(item.get("internetMessageId") or "").strip()
+    return bool(message_id and db.scalar(select(EmailMessage.id).where(
+        EmailMessage.message_id == message_id)))
 
 
 def text_body(message):
@@ -244,10 +263,14 @@ def email_notification_job(db):
                     "provider":"Microsoft 365","event":notification.event,"recipient_user_id":recipient.id,
                     "recipient_name":recipient.display_name,"recipient_email":recipient.email,"subject":email_subject,
                     "ticket_id":ticket.id if ticket else None,"ticket_number":ticket.number if ticket else ""})
+                db.commit()
             except Exception as exc:
+                db.rollback()
+                notification = db.get(Notification, notification.id)
                 notification.delivery_status = "failed"
                 fail_automation(db,"notification","Microsoft 365 email notification failed",
                                 {"notification_id":notification.id,"error":str(exc)[:300]},"notification",notification.id)
+                db.commit()
         return delivered
     host = os.getenv("ITSM_SMTP_HOST")
     if not host:
@@ -289,10 +312,14 @@ def email_notification_job(db):
                     "provider":"SMTP","event":notification.event,"recipient_user_id":recipient.id,
                     "recipient_name":recipient.display_name,"recipient_email":recipient.email,"subject":email_subject,
                     "ticket_id":ticket.id if ticket else None,"ticket_number":ticket.number if ticket else ""})
+                db.commit()
             except Exception as exc:
+                db.rollback()
+                notification = db.get(Notification, notification.id)
                 notification.delivery_status = "failed"
                 fail_automation(db, "notification", "Email notification failed",
                                 {"notification_id": notification.id, "error": str(exc)[:300]}, "notification", notification.id)
+                db.commit()
     return delivered
 
 
@@ -303,12 +330,46 @@ def microsoft_mailbox_job(db):
     for item in unread_messages(db,connection):
         graph_id=item.get("id")
         if not graph_id: continue
+        retry_state = _mail_retry_state(db, graph_id)
+        attempts = int((retry_state.value or {}).get("attempts", 0)) if retry_state else 0
+        if attempts >= _MAIL_MAX_ATTEMPTS or _message_already_processed(db, item):
+            continue
         try:
-            process_message(db,message_mime(db,connection,graph_id))
-            mark_read(db,connection,graph_id); processed+=1
+            with db.begin_nested():
+                result = process_message(db,message_mime(db,connection,graph_id))
+                db.flush()
+            if retry_state:
+                db.delete(retry_state)
+            db.commit()
+            processed += 1 if result != "duplicate" else 0
+            try:
+                mark_read(db,connection,graph_id)
+            except Exception as exc:
+                fail_automation(db,"microsoft_mailbox","Processed message could not be marked read",
+                                {"graph_message_id":graph_id,"error":str(exc)[:300]},
+                                "integration",connection.id)
+                db.commit()
         except Exception as exc:
-            fail_automation(db,"microsoft_mailbox","Inbound Microsoft 365 message failed",
-                            {"graph_message_id":graph_id,"error":str(exc)[:300]},"integration",connection.id)
+            attempts += 1
+            retry_state = _mail_retry_state(db, graph_id) or SystemState(key=_mail_retry_key(graph_id), value={})
+            retry_state.value = {
+                "graph_message_id": graph_id,
+                "internet_message_id": str(item.get("internetMessageId") or ""),
+                "attempts": attempts,
+                "status": "manual_review" if attempts >= _MAIL_MAX_ATTEMPTS else "retrying",
+                "last_error": str(exc)[:300],
+                "last_attempt": now().isoformat(),
+            }
+            db.add(retry_state)
+            summary = ("Inbound Microsoft 365 message requires manual review"
+                       if attempts >= _MAIL_MAX_ATTEMPTS else
+                       "Inbound Microsoft 365 message failed and will be retried")
+            failure = fail_automation(db,"microsoft_mailbox",summary,
+                            {"graph_message_id":graph_id,"attempt":attempts,
+                             "maximum_attempts":_MAIL_MAX_ATTEMPTS,"error":str(exc)[:300]},
+                            "integration",connection.id)
+            failure.retry_count = attempts
+            db.commit()
     connection.last_attempt_at=now(); connection.last_success_at=now(); connection.last_error=""
     connection.records_processed=(connection.records_processed or 0)+processed
     db.add(IntegrationLog(connection_id=connection.id,level="success",event="mailbox.polled",

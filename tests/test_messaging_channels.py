@@ -31,6 +31,22 @@ def test_email_subject_ticket_number_threads_reply():
         assert "after restarting" in saved.body
 
 
+def test_unpadded_email_subject_ticket_number_threads_reply():
+    with SessionLocal() as db:
+        _tenant(db)
+        existing = db.scalar(select(Ticket).order_by(Ticket.id))
+        requester = db.get(User, existing.requester_id)
+        prefix, digits = existing.number.split("-", 1)
+        message=MimeMessage();message["Message-ID"]="<northstar-unpadded-thread-test@example.test>"
+        message["From"]=requester.email;message["To"]="helpdesk@example.test"
+        message["Subject"]=f"Re: [{prefix}-{int(digits)}] More information"
+        message.set_content("This reply used an unpadded ticket number.")
+        assert process_message(db,message.as_bytes())=="threaded"
+        assert db.scalar(select(Ticket).where(
+            Ticket.subject == message["Subject"])) is None
+        db.rollback()
+
+
 def test_ticket_notification_subject_always_contains_thread_reference():
     with SessionLocal() as db:
         _tenant(db)
@@ -87,6 +103,13 @@ def test_reply_to_outbound_graph_notification_threads_without_subject_reference(
         assert email_notification_job(db) == 1
         saved = db.scalar(select(EmailMessage).where(EmailMessage.message_id == outbound_id))
         assert saved and saved.ticket_id == ticket.id and saved.processing_status == "outbound"
+        db.rollback()
+        sent = db.scalar(select(Notification).where(
+            Notification.ticket_id == ticket.id,
+            Notification.event == "technician.replied",
+            Notification.title == "A technician responded",
+        ))
+        assert sent and sent.delivery_status == "sent"
 
         reply = MimeMessage()
         reply["Message-ID"] = "<northstar-reply-with-rewritten-subject@example.test>"

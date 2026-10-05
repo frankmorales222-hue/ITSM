@@ -23,7 +23,12 @@ TICKET_REFERENCE_PATTERN = re.compile(r"(?<![A-Z0-9])(?:REQ|INC|CHG|HR)-\d+(?![A
 def ticket_number_from_email_subject(subject: str | None) -> str | None:
     """Return the stable Northstar ticket reference carried in an email subject."""
     match = TICKET_REFERENCE_PATTERN.search(subject or "")
-    return match.group(0).upper() if match else None
+    if not match:
+        return None
+    prefix, digits = match.group(0).upper().split("-", 1)
+    # Ticket sequences are stored with six digits, but people and some mail
+    # clients commonly remove the leading zeroes when typing a reply subject.
+    return f"{prefix}-{int(digits):06d}"
 
 
 def ticket_from_email_subject(db: Session, subject: str | None) -> Ticket | None:
