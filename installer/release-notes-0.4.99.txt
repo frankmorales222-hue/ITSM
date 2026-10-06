@@ -1,0 +1,1 @@
+Keeps endpoint heartbeats responsive during endpoint actions, reports agents that do not respond, automatically restarts stopped agents, and retains the secure self-service install and repair fixes.

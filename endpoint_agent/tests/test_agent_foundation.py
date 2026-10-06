@@ -1,5 +1,11 @@
+import base64
+import ctypes
 import json
 import hashlib
+import os
+import re
+import shutil
+import subprocess
 import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -8,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from asset_agent.identity.device_identity import stable_device_id
-from asset_agent.agent import Agent, SingleInstance
+from asset_agent.agent import Agent, SingleInstance, watchdog_restart_reason
 from asset_agent.storage.database import AgentDatabase
 from asset_agent.tray import help_desk_urls
 from asset_agent.transport.sync_interface import InventoryTransport
@@ -314,6 +320,69 @@ def test_action_scheduler_runs_while_inventory_is_blocked_and_times_out():
         scheduler.stop()
 
 
+def test_action_scheduler_survives_refresh_and_heartbeat_exceptions():
+    errors = []
+    calls = {"refresh": 0, "heartbeat": 0}
+    completed = threading.Event()
+
+    def refresh():
+        calls["refresh"] += 1
+        if calls["refresh"] == 1:
+            raise RuntimeError("refresh failed")
+        return True
+
+    def heartbeat():
+        calls["heartbeat"] += 1
+        if calls["heartbeat"] == 1:
+            raise RuntimeError("heartbeat failed")
+        completed.set()
+
+    scheduler = Scheduler(lambda: None, heartbeat, 300, 15, refresh_requested=refresh,
+                          action_error=lambda exc: errors.append(str(exc)))
+    scheduler.start()
+    try:
+        assert completed.wait(7)
+        assert scheduler.action_thread.is_alive()
+        assert errors[:2] == ["refresh failed", "heartbeat failed"]
+    finally:
+        scheduler.stop()
+
+
+def test_hung_action_times_out_without_starting_another_worker(monkeypatch):
+    class AliveWorker:
+        def is_alive(self): return True
+    results = []
+    agent = Agent.__new__(Agent)
+    agent.config = type("Config", (), {"credential": "secret"})()
+    agent.transport = type("Transport", (), {
+        "action_result": lambda _self, _credential, action_id, succeeded, summary:
+            results.append((action_id, succeeded, summary)),
+    })()
+    agent.logger = __import__("logging").getLogger("hung-action-test")
+    agent._action_lock = threading.Lock()
+    agent._action_worker = AliveWorker()
+    agent._action_current = {"id": 44, "action_type": "terminate_process", "target": "EXCEL.EXE"}
+    agent._action_started_at = 0
+    agent._action_timeout_reported = False
+    monkeypatch.setattr("asset_agent.agent.time.monotonic", lambda: 91)
+
+    agent._service_action_worker()
+    agent._service_action_worker()
+
+    assert results == [(44, False, "Action timed out on the endpoint")]
+    assert agent._action_timeout_reported is True
+
+
+def test_watchdog_detects_dead_action_thread_and_stale_heartbeat(monkeypatch):
+    scheduler = type("SchedulerState", (), {})()
+    scheduler.action_thread = type("Thread", (), {"is_alive": lambda _self: False})()
+    scheduler.last_heartbeat_attempt = 100
+    assert watchdog_restart_reason(scheduler) == "action thread stopped"
+    scheduler.action_thread = type("Thread", (), {"is_alive": lambda _self: True})()
+    monkeypatch.setattr("asset_agent.agent.time.monotonic", lambda: 401)
+    assert watchdog_restart_reason(scheduler, 300) == "heartbeat attempt stale"
+
+
 def test_self_repair_scheduler_runs_while_inventory_is_blocked():
     inventory_started = threading.Event()
     release_inventory = threading.Event()
@@ -355,16 +424,16 @@ def test_update_retry_waits_24_hours_but_newer_version_runs(tmp_path, monkeypatc
     state_dir = tmp_path / "updates"
     state_dir.mkdir()
     (state_dir / "update-state.json").write_text(json.dumps({
-        "version": "0.1.44", "status": "failed", "attempted_at": datetime.now(timezone.utc).isoformat(),
+        "version": "0.1.45", "status": "failed", "attempted_at": datetime.now(timezone.utc).isoformat(),
     }), encoding="utf-8")
     launches = []
     monkeypatch.setattr("asset_agent.agent.subprocess.Popen", lambda *args, **kwargs: launches.append(args))
 
-    agent.schedule_agent_update({"version": "0.1.44", "sha256": digest,
+    agent.schedule_agent_update({"version": "0.1.45", "sha256": digest,
                                  "download_path": "/api/agent/update/download"})
     assert agent.transport.downloads == []
 
-    agent.schedule_agent_update({"version": "0.1.45", "sha256": digest,
+    agent.schedule_agent_update({"version": "0.1.47", "sha256": digest,
                                  "download_path": "/api/agent/update/download"})
     assert agent.transport.downloads == ["/api/agent/update/download"]
     assert len(launches) == 1
@@ -470,6 +539,25 @@ def test_installer_exit_codes_distinguish_required_and_optional_steps():
 
     assert 'Write-InstallWarning "The endpoint agent is running' in enterprise
     assert enterprise.rstrip().endswith("exit 0")
+
+
+def test_agent_task_xml_has_restart_and_five_minute_trigger_and_self_repair_checks_it():
+    root = Path(__file__).resolve().parents[1]
+    enterprise = (root / "scripts/install-enterprise.ps1").read_text(encoding="utf-8")
+    repair = (root / "scripts/repair-agent-install.ps1").read_text(encoding="utf-8")
+    self_service = (root / "scripts/install-self-service.ps1").read_text(encoding="utf-8")
+    migration = (root / "scripts/migrate-legacy-x86-install.ps1").read_text(encoding="utf-8")
+    tray = (root / "scripts/install-tray-launcher-task.ps1").read_text(encoding="utf-8")
+    installer = (root / "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
+    stop_script = (root / "scripts/stop-agent-for-upgrade.ps1").read_text(encoding="utf-8")
+    for script in (enterprise, repair):
+        assert "<RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>" in script
+        assert "<TimeTrigger><Repetition><Interval>PT5M</Interval>" in script
+        assert "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>" in script
+    assert 'SelectSingleNode("/t:Task/t:Settings/t:RestartOnFailure/t:Interval"' in repair
+    assert 'SelectSingleNode("/t:Task/t:Triggers/t:TimeTrigger/t:Repetition/t:Interval"' in repair
+    assert 'agent-stops.log' in stop_script
+    assert 'reason=agent upgrade' in stop_script
     assert "$global:LASTEXITCODE = 0" in enterprise
     assert "$enterpriseExitCode = $LASTEXITCODE" in self_service
     assert "if ($enterpriseExitCode -ne 0)" in self_service
@@ -484,19 +572,139 @@ def test_installer_exit_codes_distinguish_required_and_optional_steps():
     assert "ConfigurationFailed := True" not in tray_warning
 
 
-def test_agent_0144_release_metadata_is_aligned():
+def _write_self_service_child_fixture(tmp_path):
     root = Path(__file__).resolve().parents[1]
-    assert '__version__ = "0.1.44"' in (root /
+    fixture = tmp_path / "self-service-child"
+    fixture.mkdir()
+    shutil.copy2(root / "scripts/install-self-service.ps1", fixture / "install-self-service.ps1")
+    (fixture / "install-enterprise.ps1").write_text(r'''
+param(
+    [Parameter(Mandatory=$true)][string]$ServerUrl,
+    [string]$EnrollmentToken = "",
+    [string]$EnrollmentTokenFile = "",
+    [string]$TlsCertificateSha256 = "",
+    [string]$InstallRoot = "",
+    [string]$DataRoot = ""
+)
+$commandLine = [string](Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CommandLine
+$tokenFileExists = [bool]($EnrollmentTokenFile -and (Test-Path -LiteralPath $EnrollmentTokenFile))
+$tokenValue = if ($tokenFileExists) { Get-Content -LiteralPath $EnrollmentTokenFile -Raw } else { "" }
+[ordered]@{
+    bound_keys = @($PSBoundParameters.Keys | ForEach-Object { [string]$_ })
+    command_line = $commandLine
+    enrollment_token = $EnrollmentToken
+    enrollment_token_file = $EnrollmentTokenFile
+    token_file_exists = $tokenFileExists
+    token_value = $tokenValue
+    tls = $TlsCertificateSha256
+    install_root = $InstallRoot
+    data_root = $DataRoot
+} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $env:NORTHSTAR_TEST_CAPTURE -Encoding UTF8
+exit [int]$env:NORTHSTAR_TEST_CHILD_EXIT
+'''.lstrip(), encoding="utf-8")
+    return fixture
+
+
+def _run_self_service_fixture(fixture, program_data, *arguments, child_exit=0):
+    capture = program_data / "child-arguments.json"
+    env = os.environ.copy()
+    env["ProgramData"] = str(program_data)
+    env["NORTHSTAR_TEST_CAPTURE"] = str(capture)
+    env["NORTHSTAR_TEST_CHILD_EXIT"] = str(child_exit)
+    powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    completed = subprocess.run(
+        [str(powershell), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(fixture / "install-self-service.ps1"), *arguments],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    captured = json.loads(capture.read_text(encoding="utf-8-sig")) if capture.exists() else None
+    return completed, captured
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+def test_existing_config_repair_omits_empty_child_arguments(tmp_path):
+    fixture = _write_self_service_child_fixture(tmp_path)
+    program_data = tmp_path / "program-data"
+    data_root = program_data / "NorthstarEndpointAgent"
+    data_root.mkdir(parents=True)
+    (data_root / "config.json").write_text(
+        json.dumps({"server_url": "https://helpdesk.test"}), encoding="utf-8")
+
+    completed, captured = _run_self_service_fixture(fixture, program_data)
+
+    assert completed.returncode == 0, completed.stderr
+    assert captured is not None
+    assert captured["bound_keys"] == ["ServerUrl"]
+    assert "TlsCertificateSha256" not in captured["command_line"]
+    assert "EnrollmentToken" not in captured["command_line"]
+    assert captured["enrollment_token_file"] == ""
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell 5.1")
+@pytest.mark.parametrize("child_exit", [0, 7])
+def test_enrollment_token_uses_locked_file_and_is_always_deleted(tmp_path, child_exit):
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        pytest.skip("secure SYSTEM/Administrators staging requires an elevated Windows test process")
+    fixture = _write_self_service_child_fixture(tmp_path)
+    program_data = tmp_path / "program-data"
+    program_data.mkdir()
+    token = "one-use-secret-token"
+    encoded_server = base64.urlsafe_b64encode(b"https://helpdesk.test").decode().rstrip("=")
+    enrollment_code = f"{encoded_server}.{token}"
+
+    completed, captured = _run_self_service_fixture(
+        fixture, program_data, "-EnrollmentCode", enrollment_code, child_exit=child_exit)
+
+    assert completed.returncode == (0 if child_exit == 0 else 1)
+    assert captured is not None
+    assert "EnrollmentTokenFile" in captured["bound_keys"]
+    assert "EnrollmentToken" not in captured["bound_keys"]
+    assert "TlsCertificateSha256" not in captured["bound_keys"]
+    assert captured["token_file_exists"] is True
+    assert captured["token_value"] == token
+    assert token not in captured["command_line"]
+    assert "-EnrollmentTokenFile" in captured["command_line"]
+    assert not Path(captured["enrollment_token_file"]).exists()
+
+
+def test_child_powershell_calls_do_not_pass_possibly_empty_pairs_directly():
+    root = Path(__file__).resolve().parents[1]
+    script_names = [
+        "install-self-service.ps1", "install-enterprise.ps1",
+        "repair-agent-install.ps1", "migrate-legacy-x86-install.ps1",
+    ]
+    forbidden_pair = re.compile(
+        r"&\s+\$powerShell[^\r\n]*-(?:EnrollmentCode|EnrollmentToken|TlsCertificateSha256|InstallRoot|DataRoot|ErrorLog)\s+\$\w+",
+        re.IGNORECASE,
+    )
+    for name in script_names:
+        text = (root / "scripts" / name).read_text(encoding="utf-8")
+        assert not forbidden_pair.search(text), name
+        for line in text.splitlines():
+            if re.search(r"&\s+\$powerShell", line, re.IGNORECASE):
+                assert re.search(r"@\w+", line), f"{name}: {line}"
+
+    installer = (root / "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
+    assert " -EnrollmentCode " not in installer
+    assert "-EnrollmentCodeFile " in installer
+    assert "if EnrollmentCodeValue <> '' then" in installer
+    assert "if EnrollmentCodePath <> '' then DeleteFile(EnrollmentCodePath)" in installer
+
+
+def test_agent_0146_release_metadata_is_aligned():
+    root = Path(__file__).resolve().parents[1]
+    assert '__version__ = "0.1.46"' in (root /
         "asset_agent/__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.1.44"' in (root /
+    assert 'version = "0.1.46"' in (root /
         "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.1.44"' in (root /
+    assert '#define MyAppVersion "0.1.46"' in (root /
         "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
-    notes = (root / "release-notes-0.1.44.txt").read_text(encoding="utf-8")
-    assert "tray launcher task definition" in notes and "successful installs" in notes
+    notes = (root / "release-notes-0.1.46.txt").read_text(encoding="utf-8")
+    assert "heartbeats responsive" in notes
+    assert "0.1.45 self-service installer security fixes" in notes
     server_installer = (root.parent / "installer/NorthstarDeskServer.iss").read_text(encoding="utf-8")
     server_builder = (root.parent / "installer/build-full-server-update.ps1").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.4.98"' in server_installer
-    assert '[string]$Version = "0.4.98"' in server_builder
-    server_notes = (root.parent / "installer/release-notes-0.4.98.txt").read_text(encoding="utf-8")
-    assert server_notes == notes
+    assert '#define MyAppVersion "0.4.99"' in server_installer
+    assert '[string]$Version = "0.4.99"' in server_builder
+    server_notes = (root.parent / "installer/release-notes-0.4.99.txt").read_text(encoding="utf-8")
+    assert "automatically restarts stopped agents" in server_notes

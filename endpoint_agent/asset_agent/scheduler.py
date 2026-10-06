@@ -5,7 +5,8 @@ import time
 class Scheduler:
     def __init__(self, full_action, heartbeat_action, full_interval: int, heartbeat_interval: int,
                  refresh_requested=None, full_timeout: int = 900, full_timeout_action=None,
-                 maintenance_action=None, maintenance_interval: int = 21600):
+                 maintenance_action=None, maintenance_interval: int = 21600,
+                 action_error=None):
         self.full_action = full_action
         self.heartbeat_action = heartbeat_action
         self.full_interval = max(300, full_interval)
@@ -15,6 +16,8 @@ class Scheduler:
         self.full_timeout_action = full_timeout_action
         self.maintenance_action = maintenance_action
         self.maintenance_interval = max(3600, maintenance_interval)
+        self.action_error = action_error
+        self.last_heartbeat_attempt = time.monotonic()
         self.stop_event = threading.Event()
         self.inventory_thread = threading.Thread(
             target=self._run_inventory, name="northstar-agent-inventory-scheduler", daemon=True
@@ -50,13 +53,20 @@ class Scheduler:
     def _run_actions(self) -> None:
         next_heartbeat = 0.0
         while not self.stop_event.is_set():
-            current = time.monotonic()
-            refresh = self.refresh_requested and self.refresh_requested()
-            if refresh or current >= next_heartbeat:
-                try:
+            try:
+                current = time.monotonic()
+                refresh = self.refresh_requested and self.refresh_requested()
+                if refresh or current >= next_heartbeat:
+                    self.last_heartbeat_attempt = time.monotonic()
                     self.heartbeat_action()
-                finally:
                     next_heartbeat = time.monotonic() + self.heartbeat_interval
+            except Exception as exc:
+                next_heartbeat = time.monotonic() + self.heartbeat_interval
+                if self.action_error:
+                    try:
+                        self.action_error(exc)
+                    except Exception:
+                        pass
             self.stop_event.wait(2)
 
     def _run_maintenance(self) -> None:

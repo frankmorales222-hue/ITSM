@@ -1,0 +1,1 @@
+Fixes self-service install and repair failing with 'Missing an argument for parameter TlsCertificateSha256', and stops passing the enrollment token on the command line.

@@ -67,6 +67,12 @@ class Agent:
         self.database = AgentDatabase(data_dir / "agent.db")
         self.transport = InventoryTransport(config.server_url, tls_certificate_sha256=config.tls_certificate_sha256)
         self.logger = configure_logging(data_dir / "agent.log")
+        self._last_heartbeat_ok_log = 0.0
+        self._action_worker = None
+        self._action_started_at = 0.0
+        self._action_current = None
+        self._action_timeout_reported = False
+        self._action_lock = threading.Lock()
 
     def enroll(self, enrollment_token: str) -> dict:
         identity = collect_identity()
@@ -135,6 +141,10 @@ class Agent:
             (tray_signal_directory / "alerts.json").write_text(json.dumps({"alerts": alerts}), encoding="utf-8")
             if isinstance(result, dict):
                 self.schedule_agent_update(result.get("agent_update"))
+            now = time.monotonic()
+            if not self._last_heartbeat_ok_log or now - self._last_heartbeat_ok_log >= 900:
+                event(self.logger, "AGENT_HEARTBEAT_OK")
+                self._last_heartbeat_ok_log = now
         except Exception as exc:
             event(self.logger, "AGENT_HEARTBEAT_FAILED", exception_type=type(exc).__name__, error=str(exc))
             if strict:
@@ -144,9 +154,51 @@ class Agent:
         # A transient desktop-notification, update, or heartbeat error must
         # never prevent a previously approved remediation action from running.
         try:
-            self.perform_approved_action()
+            self._service_action_worker()
         except Exception as exc:
             event(self.logger, "ENDPOINT_ACTION_EXECUTION_FAILED", exception_type=type(exc).__name__, error=str(exc))
+
+    def _service_action_worker(self) -> None:
+        with self._action_lock:
+            worker = self._action_worker
+            action = self._action_current
+            started_at = self._action_started_at
+            timeout_reported = self._action_timeout_reported
+        if worker is not None:
+            if worker.is_alive():
+                if action and not timeout_reported and time.monotonic() - started_at >= 90:
+                    action_id = int(action["id"])
+                    action_type = str(action.get("action_type") or "")
+                    event(self.logger, "ENDPOINT_ACTION_TIMEOUT", action_id=action_id, action_type=action_type)
+                    try:
+                        self.transport.action_result(
+                            self.config.credential, action_id, False, "Action timed out on the endpoint")
+                    except Exception as exc:
+                        event(self.logger, "ENDPOINT_ACTION_RESULT_FAILED", action_id=action_id,
+                              exception_type=type(exc).__name__, error=str(exc),
+                              summary="Action timed out on the endpoint")
+                    with self._action_lock:
+                        self._action_timeout_reported = True
+                return
+            with self._action_lock:
+                self._action_worker = None
+                self._action_current = None
+                self._action_timeout_reported = False
+
+        result = self.transport.next_action(self.config.credential)
+        action = result.get("action") if isinstance(result, dict) else None
+        if not action:
+            return
+        event(self.logger, "ENDPOINT_ACTION_RECEIVED", action_id=int(action["id"]),
+              action_type=str(action.get("action_type") or ""), image=str(action.get("target") or ""))
+        worker = threading.Thread(target=self.perform_approved_action, args=(action,),
+                                  name="northstar-agent-action-worker", daemon=True)
+        with self._action_lock:
+            self._action_worker = worker
+            self._action_current = action
+            self._action_started_at = time.monotonic()
+            self._action_timeout_reported = False
+        worker.start()
 
     def consume_tray_refresh_request(self) -> bool:
         request_path = self.data_dir / "tray" / "refresh.request"
@@ -259,10 +311,17 @@ class Agent:
 
     @staticmethod
     def _run(command: list[str], timeout: int = 30) -> tuple[bool, str]:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout,
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                    shell=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        output = (completed.stdout or completed.stderr or "").strip()
-        return completed.returncode == 0, output[-900:]
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+            detail = (stdout or stderr or "").strip()
+            return False, (detail or f"Command timed out after {timeout} seconds")[-900:]
+        output = (stdout or stderr or "").strip()
+        return process.returncode == 0, output[-900:]
 
     @staticmethod
     def _windows_sessions() -> list[dict]:
@@ -361,13 +420,14 @@ class Agent:
     def inventory_timed_out(self) -> None:
         event(self.logger, "DEVICE_INVENTORY_TIMEOUT", timeout_seconds=900)
 
-    def perform_approved_action(self) -> None:
-        try:
-            result = self.transport.next_action(self.config.credential)
-        except Exception as exc:
-            event(self.logger, "ENDPOINT_ACTION_POLL_FAILED", exception_type=type(exc).__name__, error=str(exc))
-            return
-        action = result.get("action") if isinstance(result, dict) else None
+    def perform_approved_action(self, action: dict | None = None) -> None:
+        if action is None:
+            try:
+                result = self.transport.next_action(self.config.credential)
+            except Exception as exc:
+                event(self.logger, "ENDPOINT_ACTION_POLL_FAILED", exception_type=type(exc).__name__, error=str(exc))
+                return
+            action = result.get("action") if isinstance(result, dict) else None
         if not action:
             return
         action_id = int(action["id"])
@@ -385,6 +445,9 @@ class Agent:
                 if not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.exe", image_name, flags=re.IGNORECASE):
                     raise ValueError("Application name is not allowed")
                 session_id = self._session_id_for_requester(action)
+                match_method = "requester_identity" if (action.get("requester_username") or action.get("requester_upn")) else "single_active_session"
+                event(self.logger, "ENDPOINT_ACTION_SESSION_SELECTED", action_id=action_id,
+                      session_id=session_id, match_method=match_method if session_id is not None else "none")
                 if session_id is None:
                     summary = "The requester is not signed in on this computer."
                 else:
@@ -421,6 +484,11 @@ class Agent:
                 summary = detail or (f"Restarted service {target}." if succeeded else f"Could not restart service {target}.")
         except Exception as exc:
             summary = f"{type(exc).__name__}: {exc}"
+        with self._action_lock if hasattr(self, "_action_lock") else threading.Lock():
+            timed_out = bool(getattr(self, "_action_timeout_reported", False) and
+                             getattr(self, "_action_current", {}).get("id") == action_id)
+        if timed_out:
+            return
         try:
             self.transport.action_result(self.config.credential, action_id, succeeded, summary)
             event(self.logger, "ENDPOINT_ACTION_COMPLETED", action_id=action_id,
@@ -431,6 +499,14 @@ class Agent:
 
     def close(self) -> None:
         self.database.close()
+
+
+def watchdog_restart_reason(scheduler: Scheduler, maximum_heartbeat_age: int = 300) -> str | None:
+    if not scheduler.action_thread.is_alive():
+        return "action thread stopped"
+    if time.monotonic() - scheduler.last_heartbeat_attempt > maximum_heartbeat_age:
+        return "heartbeat attempt stale"
+    return None
 
 
 def main(argv=None) -> int:
@@ -485,15 +561,29 @@ def main(argv=None) -> int:
                               config.full_interval_seconds, config.heartbeat_interval_seconds,
                               refresh_requested=agent.consume_tray_refresh_request,
                               full_timeout=900, full_timeout_action=agent.inventory_timed_out,
-                              maintenance_action=agent.self_repair, maintenance_interval=21600)
+                              maintenance_action=agent.self_repair, maintenance_interval=21600,
+                              action_error=lambda exc: event(agent.logger, "AGENT_ACTION_LOOP_ERROR",
+                                                             exception_type=type(exc).__name__, error=str(exc)))
         scheduler.start()
         stop = threading.Event()
-        signal.signal(signal.SIGINT, lambda *_: stop.set())
-        signal.signal(signal.SIGTERM, lambda *_: stop.set())
-        stop.wait()
+        stop_reason = {"value": "shutdown requested"}
+        def request_stop(signum, _frame):
+            stop_reason["value"] = f"signal {signum}"
+            stop.set()
+        signal.signal(signal.SIGINT, request_stop)
+        signal.signal(signal.SIGTERM, request_stop)
+        exit_code = 0
+        while not stop.wait(5):
+            reason = watchdog_restart_reason(scheduler)
+            if reason:
+                event(agent.logger, "AGENT_WATCHDOG_RESTART", reason=reason)
+                stop_reason["value"] = reason
+                exit_code = 3
+                break
+        event(agent.logger, "AGENT_STOPPING", reason=stop_reason["value"])
         scheduler.stop()
-        event(agent.logger, "AGENT_STOPPED")
-        return 0
+        event(agent.logger, "AGENT_STOPPED", exit_code=exit_code)
+        return exit_code
     finally:
         agent.close()
         if instance:

@@ -187,16 +187,17 @@ $shortcut.IconLocation = (Join-Path $InstallRoot "northstar.ico") + ",0"
 $shortcut.Save()
 
 function Register-NorthstarTask {
-    param([string]$Name, [string]$TriggerXml, [string]$Arguments, [string]$XmlPath)
+    param([string]$Name, [string]$TriggerXml, [string]$Arguments, [string]$XmlPath, [switch]$Watchdog)
     $commandXml = [Security.SecurityElement]::Escape($targetExecutable)
     $argumentsXml = [Security.SecurityElement]::Escape($Arguments)
+    $watchdogSettings = if ($Watchdog) { '<RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>' } else { '' }
     $taskXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Author>Northstar Desk</Author></RegistrationInfo>
   <Triggers>$TriggerXml</Triggers>
   <Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
-  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority></Settings>
+  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>true</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority>$watchdogSettings</Settings>
   <Actions Context="System"><Exec><Command>$commandXml</Command><Arguments>$argumentsXml</Arguments></Exec></Actions>
 </Task>
 "@
@@ -208,17 +209,21 @@ function Register-NorthstarTask {
 }
 
 $escapedDataRoot = $DataRoot.Replace('"', '\"')
-Register-NorthstarTask -Name $taskName -TriggerXml '<BootTrigger><Enabled>true</Enabled></BootTrigger>' `
-    -Arguments ('--data-dir "' + $escapedDataRoot + '"') -XmlPath (Join-Path $env:TEMP "northstar-startup-task.xml")
+$watchdogStart = (Get-Date).AddMinutes(5).ToString("s")
+$agentTriggers = '<BootTrigger><Enabled>true</Enabled></BootTrigger><TimeTrigger><Repetition><Interval>PT5M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>' + $watchdogStart + '</StartBoundary><Enabled>true</Enabled></TimeTrigger>'
+Register-NorthstarTask -Name $taskName -TriggerXml $agentTriggers `
+    -Arguments ('--data-dir "' + $escapedDataRoot + '"') -XmlPath (Join-Path $env:TEMP "northstar-startup-task.xml") -Watchdog
 Register-NorthstarTask -Name $logonTaskName -TriggerXml '<LogonTrigger><Enabled>true</Enabled></LogonTrigger>' `
     -Arguments ('--data-dir "' + $escapedDataRoot + '" --once') -XmlPath (Join-Path $env:TEMP "northstar-logon-task.xml")
 & $schtasks /Run /TN $taskName | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Northstar was installed but its startup task could not be started." }
 $powerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$migrationArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $targetLegacyMigration)
+if ($InstallRoot) { $migrationArguments += @("-InstallRoot", $InstallRoot) }
 $previousPreference = $ErrorActionPreference
 try {
     $ErrorActionPreference = "Continue"
-    $migrationOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $targetLegacyMigration -InstallRoot $InstallRoot 2>&1
+    $migrationOutput = & $powerShell @migrationArguments 2>&1
     $migrationExitCode = $LASTEXITCODE
 } finally {
     $ErrorActionPreference = $previousPreference
@@ -234,9 +239,11 @@ do {
 } while (-not $confirmed -and (Get-Date) -lt $deadline)
 if (-not $confirmed) { throw "The new Northstar Endpoint Agent was not confirmed running from $targetExecutable within 30 seconds." }
 try {
+    $trayArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $targetTrayTaskInstaller)
+    if ($InstallRoot) { $trayArguments += @("-InstallRoot", $InstallRoot) }
     try {
         $ErrorActionPreference = "Continue"
-        $trayOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $targetTrayTaskInstaller -InstallRoot $InstallRoot 2>&1
+        $trayOutput = & $powerShell @trayArguments 2>&1
         $trayExitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference

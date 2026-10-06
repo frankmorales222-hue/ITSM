@@ -30,7 +30,7 @@ function Get-TaskXml([string]$Name) {
     } finally { $ErrorActionPreference = $oldPreference }
 }
 
-function Ensure-AgentTask([string]$Name, [string]$TriggerXml, [string]$Arguments) {
+function Ensure-AgentTask([string]$Name, [string]$TriggerXml, [string]$Arguments, [bool]$Watchdog = $false) {
     $existing = Get-TaskXml $Name
     $correct = $false
     if ($existing) {
@@ -41,14 +41,23 @@ function Ensure-AgentTask([string]$Name, [string]$TriggerXml, [string]$Arguments
         if ($command) {
             $expanded = [Environment]::ExpandEnvironmentVariables($command).Trim('"')
             $correct = [IO.Path]::GetFullPath($expanded) -ieq $CurrentExecutable
+            if ($correct -and $Watchdog) {
+                $restartInterval = $existing.SelectSingleNode("/t:Task/t:Settings/t:RestartOnFailure/t:Interval", $ns)
+                $restartCount = $existing.SelectSingleNode("/t:Task/t:Settings/t:RestartOnFailure/t:Count", $ns)
+                $repetition = $existing.SelectSingleNode("/t:Task/t:Triggers/t:TimeTrigger/t:Repetition/t:Interval", $ns)
+                $correct = $restartInterval -and $restartInterval.InnerText -eq "PT1M" -and `
+                    $restartCount -and $restartCount.InnerText -eq "999" -and `
+                    $repetition -and $repetition.InnerText -eq "PT5M"
+            }
         }
     }
     if ($correct) { return }
     $commandXml = [Security.SecurityElement]::Escape($CurrentExecutable)
     $argumentsXml = [Security.SecurityElement]::Escape($Arguments)
+    $watchdogSettings = if ($Watchdog) { '<RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>' } else { '' }
     $xmlText = @"
 <?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><RegistrationInfo><Author>Northstar Desk</Author></RegistrationInfo><Triggers>$TriggerXml</Triggers><Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings><Actions Context="System"><Exec><Command>$commandXml</Command><Arguments>$argumentsXml</Arguments></Exec></Actions></Task>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><RegistrationInfo><Author>Northstar Desk</Author></RegistrationInfo><Triggers>$TriggerXml</Triggers><Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><ExecutionTimeLimit>PT0S</ExecutionTimeLimit>$watchdogSettings</Settings><Actions Context="System"><Exec><Command>$commandXml</Command><Arguments>$argumentsXml</Arguments></Exec></Actions></Task>
 "@
     $path = Join-Path $env:TEMP ("northstar-repair-" + [guid]::NewGuid().ToString("N") + ".xml")
     try {
@@ -60,7 +69,9 @@ function Ensure-AgentTask([string]$Name, [string]$TriggerXml, [string]$Arguments
 }
 
 $escapedDataRoot = $DataRoot.Replace('"', '\"')
-Ensure-AgentTask "Northstar Endpoint Agent" '<BootTrigger><Enabled>true</Enabled></BootTrigger>' ('--data-dir "' + $escapedDataRoot + '"')
+$watchdogStart = (Get-Date).AddMinutes(5).ToString("s")
+$agentTriggers = '<BootTrigger><Enabled>true</Enabled></BootTrigger><TimeTrigger><Repetition><Interval>PT5M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><StartBoundary>' + $watchdogStart + '</StartBoundary><Enabled>true</Enabled></TimeTrigger>'
+Ensure-AgentTask "Northstar Endpoint Agent" $agentTriggers ('--data-dir "' + $escapedDataRoot + '"') $true
 Ensure-AgentTask "Northstar Endpoint Agent - User Logon Inventory" '<LogonTrigger><Enabled>true</Enabled></LogonTrigger>' ('--data-dir "' + $escapedDataRoot + '" --once')
 
 $trayConfig = Join-Path $InstallRoot "tray-config.json"
@@ -99,10 +110,12 @@ $migration = Join-Path $InstallRoot "migrate-legacy-x86-install.ps1"
 if (Test-Path -LiteralPath $migration) {
     $legacyRoot = "${env:ProgramFiles(x86)}\Northstar Endpoint Agent"
     $hadLegacyInstall = Test-Path -LiteralPath $legacyRoot
+    $migrationArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $migration)
+    if ($InstallRoot) { $migrationArguments += @("-InstallRoot", $InstallRoot) }
     $previousPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
-        $migrationOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $migration -InstallRoot $InstallRoot 2>&1
+        $migrationOutput = & $powerShell @migrationArguments 2>&1
         $migrationExitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference
@@ -117,10 +130,12 @@ if (Test-Path -LiteralPath $migration) {
 
 try {
     $trayInstaller = Join-Path $InstallRoot "install-tray-launcher-task.ps1"
+    $trayArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $trayInstaller)
+    if ($InstallRoot) { $trayArguments += @("-InstallRoot", $InstallRoot) }
     $trayPreviousPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
-        $trayOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $trayInstaller -InstallRoot $InstallRoot 2>&1
+        $trayOutput = & $powerShell @trayArguments 2>&1
         $trayExitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $trayPreviousPreference
