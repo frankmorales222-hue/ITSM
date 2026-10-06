@@ -1,5 +1,5 @@
 #define MyAppName "Northstar Endpoint Agent"
-#define MyAppVersion "0.1.46"
+#define MyAppVersion "0.1.47"
 
 [Setup]
 AppId={{6894E363-B668-4F80-9318-405974E3CE20}

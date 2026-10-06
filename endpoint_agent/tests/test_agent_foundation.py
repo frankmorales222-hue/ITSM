@@ -171,18 +171,19 @@ def test_agent_runs_only_server_approved_allowlisted_action(monkeypatch):
     agent.transport = transport
     agent.logger = __import__("logging").getLogger("endpoint-action-test")
     observed = []
-    monkeypatch.setattr(Agent, "_session_id_for_requester", classmethod(lambda cls, action: 7))
+    monkeypatch.setattr(Agent, "_session_for_requester", classmethod(lambda cls, action: (7, "requester_identity")))
     monkeypatch.setattr(Agent, "_run", staticmethod(lambda command, timeout=30: (
         observed.append(command) is None, "Closed EXCEL.EXE.",
     )))
-    agent.perform_approved_action()
+    result = Agent.execute_approved_action(transport.next_action(None)["action"])
     assert len(observed) == 1
     assert observed[0][1:] == [
         "/F", "/T", "/FI", "SESSION eq 7", "/FI", "IMAGENAME eq EXCEL.EXE",
     ]
     assert "/IM" not in observed[0]
     assert observed[0][0].lower().endswith("\\system32\\taskkill.exe") or observed[0][0] == "taskkill.exe"
-    assert transport.result == (7, True, "Closed EXCEL.EXE.")
+    assert result["succeeded"] is True
+    assert result["summary"] == "Closed EXCEL.EXE."
 
 
 def test_agent_reports_when_process_is_not_running_in_signed_in_session(monkeypatch):
@@ -199,14 +200,15 @@ def test_agent_reports_when_process_is_not_running_in_signed_in_session(monkeypa
     agent.config = type("Config", (), {"credential":"device-secret"})()
     agent.transport = transport
     agent.logger = __import__("logging").getLogger("endpoint-action-missing-test")
-    monkeypatch.setattr(Agent, "_session_id_for_requester", classmethod(lambda cls, action: 12))
+    monkeypatch.setattr(Agent, "_session_for_requester", classmethod(lambda cls, action: (12, "requester_identity")))
     monkeypatch.setattr(Agent, "_run", staticmethod(lambda command, timeout=30: (
         True, "INFO: No tasks running with the specified criteria.",
     )))
 
-    agent.perform_approved_action()
+    result = Agent.execute_approved_action(transport.next_action(None)["action"])
 
-    assert transport.result == (9, False, "EXCEL.EXE is not running for the signed-in user")
+    assert result["succeeded"] is False
+    assert result["summary"] == "EXCEL.EXE is not running for the signed-in user"
 
 
 def test_requester_rdp_session_is_chosen_over_console_session(monkeypatch):
@@ -266,10 +268,11 @@ def test_action_does_not_run_when_requester_is_unmatched_with_two_active_users(m
     monkeypatch.setattr(Agent, "_run", staticmethod(
         lambda command, timeout=30: (executed.append(command) is None, "unexpected")))
 
-    agent.perform_approved_action()
+    result = Agent.execute_approved_action(transport.next_action(None)["action"])
 
     assert executed == []
-    assert transport.result == (11, False, "The requester is not signed in on this computer.")
+    assert result["succeeded"] is False
+    assert result["summary"] == "The requester is not signed in on this computer."
 
 
 def test_taskkill_access_denied_reports_the_real_error(monkeypatch):
@@ -286,14 +289,15 @@ def test_taskkill_access_denied_reports_the_real_error(monkeypatch):
     agent.config = type("Config", (), {"credential":"device-secret"})()
     agent.transport = transport
     agent.logger = __import__("logging").getLogger("endpoint-action-denied-test")
-    monkeypatch.setattr(Agent, "_session_id_for_requester", classmethod(lambda cls, action: 12))
+    monkeypatch.setattr(Agent, "_session_for_requester", classmethod(lambda cls, action: (12, "requester_identity")))
     monkeypatch.setattr(Agent, "_run", staticmethod(lambda command, timeout=30: (
         False, "ERROR: Access is denied.",
     )))
 
-    agent.perform_approved_action()
+    result = Agent.execute_approved_action(transport.next_action(None)["action"])
 
-    assert transport.result == (10, False, "ERROR: Access is denied.")
+    assert result["succeeded"] is False
+    assert result["summary"] == "ERROR: Access is denied."
 
 
 def test_action_scheduler_runs_while_inventory_is_blocked_and_times_out():
@@ -348,29 +352,112 @@ def test_action_scheduler_survives_refresh_and_heartbeat_exceptions():
         scheduler.stop()
 
 
-def test_hung_action_times_out_without_starting_another_worker(monkeypatch):
-    class AliveWorker:
-        def is_alive(self): return True
+def _isolated_action_agent(tmp_path, monkeypatch, process_factory):
     results = []
+    heartbeats = []
     agent = Agent.__new__(Agent)
-    agent.config = type("Config", (), {"credential": "secret"})()
+    agent.data_dir = tmp_path
+    agent.config = type("Config", (), {"credential": "secret", "user_email_override": ""})()
     agent.transport = type("Transport", (), {
         "action_result": lambda _self, _credential, action_id, succeeded, summary:
             results.append((action_id, succeeded, summary)),
+        "heartbeat": lambda _self, _credential, payload: heartbeats.append(payload) or {},
     })()
-    agent.logger = __import__("logging").getLogger("hung-action-test")
-    agent._action_lock = threading.Lock()
-    agent._action_worker = AliveWorker()
-    agent._action_current = {"id": 44, "action_type": "terminate_process", "target": "EXCEL.EXE"}
-    agent._action_started_at = 0
-    agent._action_timeout_reported = False
-    monkeypatch.setattr("asset_agent.agent.time.monotonic", lambda: 91)
+    agent.logger = __import__("logging").getLogger(f"isolated-action-{id(agent)}")
+    agent._last_heartbeat_ok_log = 0.0
+    agent.schedule_agent_update = lambda _update: None
+    agent._write_restricted_action_file = lambda path, action: (
+        path.parent.mkdir(parents=True, exist_ok=True), path.write_text(json.dumps(action), encoding="utf-8"))
+    if process_factory is not None:
+        monkeypatch.setattr("asset_agent.agent.subprocess.Popen", process_factory)
+    monkeypatch.setattr("asset_agent.agent.collect_identity", lambda: {"hostname": "TEST-PC"})
+    monkeypatch.setattr("asset_agent.agent.observed_user_claims", lambda _override: {})
+    return agent, results, heartbeats
 
-    agent._service_action_worker()
-    agent._service_action_worker()
 
-    assert results == [(44, False, "Action timed out on the endpoint")]
-    assert agent._action_timeout_reported is True
+def test_action_child_crash_is_reported_and_heartbeat_still_runs(tmp_path, monkeypatch, caplog):
+    caplog.set_level(__import__("logging").INFO)
+    agent, results, heartbeats = _isolated_action_agent(tmp_path, monkeypatch, None)
+    agent._action_child_command = lambda _path: [
+        os.sys.executable, "-c", "import os; os._exit(-1073741819)",
+    ]
+    agent.perform_approved_action({"id": 51, "action_type": "terminate_process", "target": "EXCEL.EXE"})
+    agent.heartbeat(perform_actions=False)
+
+    assert results == [(51, False, "The endpoint action process ended unexpectedly (exit code -1073741819)")]
+    assert len(heartbeats) == 1
+    assert "ENDPOINT_ACTION_CHILD_FAILED" in caplog.text
+
+
+def test_action_child_timeout_is_killed_and_heartbeat_still_runs(tmp_path, monkeypatch):
+    wait_started = threading.Event()
+    allow_timeout = threading.Event()
+
+    class HungProcess:
+        pid = 412
+        returncode = None
+        killed = False
+        def wait(self, timeout=None):
+            if timeout is not None:
+                wait_started.set()
+                allow_timeout.wait(5)
+                raise subprocess.TimeoutExpired("action-child", timeout)
+            self.returncode = -9
+            return self.returncode
+        def kill(self): self.killed = True
+
+    process = HungProcess()
+    agent, results, heartbeats = _isolated_action_agent(tmp_path, monkeypatch, lambda *_a, **_k: process)
+    worker = threading.Thread(target=agent.perform_approved_action,
+                              args=({"id": 52, "action_type": "terminate_process", "target": "EXCEL.EXE"},))
+    worker.start()
+    assert wait_started.wait(1)
+    agent.heartbeat(perform_actions=False)
+    allow_timeout.set()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert process.killed is True
+    assert results == [(52, False, "Action timed out on the endpoint")]
+    assert len(heartbeats) == 1
+
+
+def test_action_child_success_result_is_reported_exactly(tmp_path, monkeypatch):
+    class SuccessfulProcess:
+        pid = 413
+        returncode = 0
+        def __init__(self, command): self.command = command
+        def wait(self, timeout=None):
+            action_file = Path(self.command[self.command.index("--run-action") + 1])
+            result_file = action_file.with_name(action_file.stem + ".result.json")
+            result_file.write_text(json.dumps({
+                "succeeded": True, "summary": "Closed EXCEL.EXE.",
+                "session_id": 7, "match_method": "requester_identity",
+            }), encoding="utf-8")
+            return 0
+        def kill(self): raise AssertionError("successful child must not be killed")
+
+    agent, results, _heartbeats = _isolated_action_agent(
+        tmp_path, monkeypatch, lambda command, **_kwargs: SuccessfulProcess(command))
+    agent.perform_approved_action({"id": 53, "action_type": "terminate_process", "target": "EXCEL.EXE"})
+
+    assert results == [(53, True, "Closed EXCEL.EXE.")]
+    assert list((tmp_path / "action-staging").glob("*.json")) == []
+
+
+def test_hidden_run_action_mode_does_not_load_config_or_agent_database(tmp_path):
+    action_file = tmp_path / "one-action.json"
+    action_file.write_text(json.dumps({"id": 54, "action_type": "unsupported", "target": ""}), encoding="utf-8")
+    completed = subprocess.run([
+        os.sys.executable, "-m", "asset_agent.agent", "--run-action", str(action_file),
+        "--data-dir", str(tmp_path),
+    ], capture_output=True, text=True, timeout=30)
+    result_file = tmp_path / "one-action.result.json"
+
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(result_file.read_text(encoding="utf-8"))["summary"] == "Unsupported endpoint action"
+    assert not (tmp_path / "config.json").exists()
+    assert not (tmp_path / "agent.db").exists()
 
 
 def test_watchdog_detects_dead_action_thread_and_stale_heartbeat(monkeypatch):
@@ -433,7 +520,7 @@ def test_update_retry_waits_24_hours_but_newer_version_runs(tmp_path, monkeypatc
                                  "download_path": "/api/agent/update/download"})
     assert agent.transport.downloads == []
 
-    agent.schedule_agent_update({"version": "0.1.47", "sha256": digest,
+    agent.schedule_agent_update({"version": "0.1.48", "sha256": digest,
                                  "download_path": "/api/agent/update/download"})
     assert agent.transport.downloads == ["/api/agent/update/download"]
     assert len(launches) == 1
@@ -458,13 +545,14 @@ def test_agent_waits_for_service_to_stop_before_restart(monkeypatch):
         observed.append(command) is None and next(responses)
     )))
     monkeypatch.setattr("asset_agent.agent.time.sleep", lambda _seconds: None)
-    agent.perform_approved_action()
+    result = Agent.execute_approved_action(transport.next_action(None)["action"])
     assert observed == [
         ["sc.exe", "stop", "Spooler"],
         ["sc.exe", "query", "Spooler"],
         ["sc.exe", "start", "Spooler"],
     ]
-    assert transport.result == (8, True, "START_PENDING")
+    assert result["succeeded"] is True
+    assert result["summary"] == "START_PENDING"
 
 
 def test_system_install_relaunches_tray_through_users_group_task():
@@ -691,17 +779,17 @@ def test_child_powershell_calls_do_not_pass_possibly_empty_pairs_directly():
     assert "if EnrollmentCodePath <> '' then DeleteFile(EnrollmentCodePath)" in installer
 
 
-def test_agent_0146_release_metadata_is_aligned():
+def test_agent_0147_release_metadata_is_aligned():
     root = Path(__file__).resolve().parents[1]
-    assert '__version__ = "0.1.46"' in (root /
+    assert '__version__ = "0.1.47"' in (root /
         "asset_agent/__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.1.46"' in (root /
+    assert 'version = "0.1.47"' in (root /
         "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.1.46"' in (root /
+    assert '#define MyAppVersion "0.1.47"' in (root /
         "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
-    notes = (root / "release-notes-0.1.46.txt").read_text(encoding="utf-8")
-    assert "heartbeats responsive" in notes
-    assert "0.1.45 self-service installer security fixes" in notes
+    notes = (root / "release-notes-0.1.47.txt").read_text(encoding="utf-8")
+    assert "isolated child process" in notes
+    assert "heartbeating" in notes
     server_installer = (root.parent / "installer/NorthstarDeskServer.iss").read_text(encoding="utf-8")
     server_builder = (root.parent / "installer/build-full-server-update.ps1").read_text(encoding="utf-8")
     assert '#define MyAppVersion "0.4.99"' in server_installer

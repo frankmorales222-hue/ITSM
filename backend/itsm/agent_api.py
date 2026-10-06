@@ -32,7 +32,7 @@ from .security import STAFF_ROLES, current_user, get_current_session, require_ro
 from .services import audit, notify
 
 router = APIRouter(prefix="/api")
-CURRENT_ENDPOINT_AGENT_VERSION = "0.1.46"
+CURRENT_ENDPOINT_AGENT_VERSION = "0.1.47"
 AGENT_CHECK_IN_GRACE = timedelta(minutes=5)
 
 
@@ -417,7 +417,8 @@ def _create_auto_approved_action(db: Session, ticket: Ticket, agent: EndpointAge
 
 
 def _recover_stale_endpoint_actions(db: Session, actor_id: int | None = None,
-                                    agent_id: int | None = None) -> tuple[int, int]:
+                                    agent_id: int | None = None,
+                                    ticket_id: int | None = None) -> tuple[int, int]:
     no_response_threshold = now() - timedelta(seconds=ENDPOINT_ACTION_NO_RESPONSE_SECONDS)
     no_response_conditions = [
         EndpointAction.status == "Approved",
@@ -426,6 +427,8 @@ def _recover_stale_endpoint_actions(db: Session, actor_id: int | None = None,
     ]
     if agent_id is not None:
         no_response_conditions.append(EndpointAction.agent_id == agent_id)
+    if ticket_id is not None:
+        no_response_conditions.append(EndpointAction.ticket_id == ticket_id)
     unresponsive = db.scalars(
         select(EndpointAction).where(*no_response_conditions).with_for_update()
     ).all()
@@ -453,6 +456,8 @@ def _recover_stale_endpoint_actions(db: Session, actor_id: int | None = None,
                   EndpointAction.dispatched_at < stale_threshold]
     if agent_id is not None:
         conditions.append(EndpointAction.agent_id == agent_id)
+    if ticket_id is not None:
+        conditions.append(EndpointAction.ticket_id == ticket_id)
     stale_actions = db.scalars(select(EndpointAction).where(*conditions).with_for_update()).all()
     recovered = 0
     for item in stale_actions:
@@ -872,7 +877,7 @@ def ticket_endpoint_actions(ticket_id: int, user: User = Depends(current_user), 
     if not ticket or (user.id not in {ticket.requester_id, ticket.assigned_user_id} and user.role not in STAFF_ROLES):
         raise HTTPException(404, "Ticket not found")
     agent = _ticket_agent(db, ticket)
-    _recover_stale_endpoint_actions(db, actor_id=user.id, agent_id=agent.id if agent else None)
+    _recover_stale_endpoint_actions(db, actor_id=user.id, ticket_id=ticket.id)
     db.commit()
     actions = db.scalars(select(EndpointAction).where(EndpointAction.ticket_id == ticket.id)
                          .order_by(EndpointAction.created_at.desc())).all()

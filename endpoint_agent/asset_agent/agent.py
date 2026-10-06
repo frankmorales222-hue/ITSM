@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import re
+import secrets
 import subprocess
 import time
 import sys
@@ -22,6 +23,38 @@ from .observed_user import observed_user_claims
 from .scheduler import Scheduler
 from .storage.database import AgentDatabase
 from .transport.sync_interface import InventoryTransport
+
+
+_WTSAPI32 = None
+
+
+class _WTS_SESSION_INFO(ctypes.Structure):
+    _fields_ = [
+        ("session_id", wintypes.DWORD),
+        ("station_name", wintypes.LPWSTR),
+        ("state", ctypes.c_int),
+    ]
+
+
+def _wtsapi32():
+    """Load and declare WTS APIs once in the isolated action process."""
+    global _WTSAPI32
+    if _WTSAPI32 is None:
+        wts = ctypes.WinDLL("Wtsapi32.dll")
+        wts.WTSEnumerateSessionsW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+            ctypes.POINTER(ctypes.POINTER(_WTS_SESSION_INFO)), ctypes.POINTER(wintypes.DWORD),
+        ]
+        wts.WTSEnumerateSessionsW.restype = wintypes.BOOL
+        wts.WTSQuerySessionInformationW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.c_int,
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD),
+        ]
+        wts.WTSQuerySessionInformationW.restype = wintypes.BOOL
+        wts.WTSFreeMemory.argtypes = [ctypes.c_void_p]
+        wts.WTSFreeMemory.restype = None
+        _WTSAPI32 = wts
+    return _WTSAPI32
 
 
 class SingleInstance:
@@ -69,9 +102,6 @@ class Agent:
         self.logger = configure_logging(data_dir / "agent.log")
         self._last_heartbeat_ok_log = 0.0
         self._action_worker = None
-        self._action_started_at = 0.0
-        self._action_current = None
-        self._action_timeout_reported = False
         self._action_lock = threading.Lock()
 
     def enroll(self, enrollment_token: str) -> dict:
@@ -161,29 +191,11 @@ class Agent:
     def _service_action_worker(self) -> None:
         with self._action_lock:
             worker = self._action_worker
-            action = self._action_current
-            started_at = self._action_started_at
-            timeout_reported = self._action_timeout_reported
         if worker is not None:
             if worker.is_alive():
-                if action and not timeout_reported and time.monotonic() - started_at >= 90:
-                    action_id = int(action["id"])
-                    action_type = str(action.get("action_type") or "")
-                    event(self.logger, "ENDPOINT_ACTION_TIMEOUT", action_id=action_id, action_type=action_type)
-                    try:
-                        self.transport.action_result(
-                            self.config.credential, action_id, False, "Action timed out on the endpoint")
-                    except Exception as exc:
-                        event(self.logger, "ENDPOINT_ACTION_RESULT_FAILED", action_id=action_id,
-                              exception_type=type(exc).__name__, error=str(exc),
-                              summary="Action timed out on the endpoint")
-                    with self._action_lock:
-                        self._action_timeout_reported = True
                 return
             with self._action_lock:
                 self._action_worker = None
-                self._action_current = None
-                self._action_timeout_reported = False
 
         result = self.transport.next_action(self.config.credential)
         action = result.get("action") if isinstance(result, dict) else None
@@ -195,9 +207,6 @@ class Agent:
                                   name="northstar-agent-action-worker", daemon=True)
         with self._action_lock:
             self._action_worker = worker
-            self._action_current = action
-            self._action_started_at = time.monotonic()
-            self._action_timeout_reported = False
         worker.start()
 
     def consume_tray_refresh_request(self) -> bool:
@@ -329,27 +338,9 @@ class Agent:
         if os.name != "nt":
             return []
 
-        class WTS_SESSION_INFO(ctypes.Structure):
-            _fields_ = [
-                ("session_id", wintypes.DWORD),
-                ("station_name", wintypes.LPWSTR),
-                ("state", ctypes.c_int),
-            ]
-
-        wts = ctypes.WinDLL("Wtsapi32.dll")
-        sessions_pointer = ctypes.POINTER(WTS_SESSION_INFO)()
+        wts = _wtsapi32()
+        sessions_pointer = ctypes.POINTER(_WTS_SESSION_INFO)()
         count = wintypes.DWORD()
-        wts.WTSEnumerateSessionsW.argtypes = [
-            wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
-            ctypes.POINTER(ctypes.POINTER(WTS_SESSION_INFO)), ctypes.POINTER(wintypes.DWORD),
-        ]
-        wts.WTSEnumerateSessionsW.restype = wintypes.BOOL
-        wts.WTSQuerySessionInformationW.argtypes = [
-            wintypes.HANDLE, wintypes.DWORD, ctypes.c_int,
-            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.DWORD),
-        ]
-        wts.WTSQuerySessionInformationW.restype = wintypes.BOOL
-        wts.WTSFreeMemory.argtypes = [ctypes.c_void_p]
 
         def session_text(session_id: int, information_class: int) -> str:
             buffer = ctypes.c_void_p()
@@ -384,7 +375,7 @@ class Agent:
                     })
             return sessions
         finally:
-            wts.WTSFreeMemory(sessions_pointer)
+            wts.WTSFreeMemory(ctypes.cast(sessions_pointer, ctypes.c_void_p))
 
     @staticmethod
     def _identity_names(value: object) -> set[str]:
@@ -400,6 +391,11 @@ class Agent:
 
     @classmethod
     def _session_id_for_requester(cls, action: dict) -> int | None:
+        session_id, _match_method = cls._session_for_requester(action)
+        return session_id
+
+    @classmethod
+    def _session_for_requester(cls, action: dict) -> tuple[int | None, str]:
         requested_names = set()
         requested_names.update(cls._identity_names(action.get("requester_username")))
         requested_names.update(cls._identity_names(action.get("requester_upn")))
@@ -410,51 +406,44 @@ class Agent:
             if domain and session.get("username"):
                 session_names.update(cls._identity_names(f"{domain}\\{session['username']}"))
             if requested_names and requested_names.intersection(session_names):
-                return int(session["session_id"])
+                return int(session["session_id"]), "requester_identity"
         # Older servers may not send requester identity, and directory naming
         # can occasionally differ from the WTS username. A single active user
         # is unambiguous; with two or more users, never guess which session owns
         # the request or terminate another person's process.
-        return int(sessions[0]["session_id"]) if len(sessions) == 1 else None
+        if len(sessions) == 1:
+            return int(sessions[0]["session_id"]), "single_active_session"
+        return None, "no_unambiguous_session"
 
     def inventory_timed_out(self) -> None:
         event(self.logger, "DEVICE_INVENTORY_TIMEOUT", timeout_seconds=900)
 
-    def perform_approved_action(self, action: dict | None = None) -> None:
-        if action is None:
-            try:
-                result = self.transport.next_action(self.config.credential)
-            except Exception as exc:
-                event(self.logger, "ENDPOINT_ACTION_POLL_FAILED", exception_type=type(exc).__name__, error=str(exc))
-                return
-            action = result.get("action") if isinstance(result, dict) else None
-        if not action:
-            return
+    @classmethod
+    def execute_approved_action(cls, action: dict, logger=None) -> dict:
+        """Execute one validated action. This runs only in --run-action mode."""
         action_id = int(action["id"])
         action_type = str(action.get("action_type") or "")
         target = str(action.get("target") or "").strip()
         succeeded = False
         summary = "Unsupported endpoint action"
+        session_id = None
+        match_method = "not_applicable"
         try:
             if action_type == "terminate_process":
-                # Accept an executable name (or a pasted Windows path), but
-                # always reduce it to a basename before invoking taskkill.
-                # This prevents shell/path injection and matches taskkill's
-                # /IM contract, which accepts an image name only.
                 image_name = os.path.basename(target.strip().strip('"'))
                 if not re.fullmatch(r"[A-Za-z0-9_. -]{1,120}\.exe", image_name, flags=re.IGNORECASE):
                     raise ValueError("Application name is not allowed")
-                session_id = self._session_id_for_requester(action)
-                match_method = "requester_identity" if (action.get("requester_username") or action.get("requester_upn")) else "single_active_session"
-                event(self.logger, "ENDPOINT_ACTION_SESSION_SELECTED", action_id=action_id,
-                      session_id=session_id, match_method=match_method if session_id is not None else "none")
+                session_id, match_method = cls._session_for_requester(action)
+                if logger:
+                    event(logger, "ENDPOINT_ACTION_SESSION_SELECTED", action_id=action_id,
+                          session_id=session_id, match_method=match_method)
                 if session_id is None:
                     summary = "The requester is not signed in on this computer."
                 else:
                     taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\\Windows"), "System32", "taskkill.exe")
                     if not os.path.isfile(taskkill):
                         taskkill = "taskkill.exe"
-                    succeeded, detail = self._run([
+                    succeeded, detail = cls._run([
                         taskkill, "/F", "/T", "/FI", f"SESSION eq {session_id}",
                         "/FI", f"IMAGENAME eq {image_name}",
                     ], 20)
@@ -470,25 +459,120 @@ class Agent:
             elif action_type == "restart_service":
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", target):
                     raise ValueError("Service name is not allowed")
-                stopped, stop_detail = self._run(["sc.exe", "stop", target], 30)
+                stopped, stop_detail = cls._run(["sc.exe", "stop", target], 30)
                 if not stopped and "service has not been started" not in stop_detail.lower():
                     raise RuntimeError(stop_detail or f"Could not stop service {target}.")
                 for _ in range(15):
-                    _queried, state = self._run(["sc.exe", "query", target], 10)
+                    _queried, state = cls._run(["sc.exe", "query", target], 10)
                     if "STOPPED" in state.upper():
                         break
                     time.sleep(1)
                 else:
                     raise RuntimeError(f"Service {target} did not stop within 15 seconds.")
-                succeeded, detail = self._run(["sc.exe", "start", target], 30)
+                succeeded, detail = cls._run(["sc.exe", "start", target], 30)
                 summary = detail or (f"Restarted service {target}." if succeeded else f"Could not restart service {target}.")
         except Exception as exc:
             summary = f"{type(exc).__name__}: {exc}"
-        with self._action_lock if hasattr(self, "_action_lock") else threading.Lock():
-            timed_out = bool(getattr(self, "_action_timeout_reported", False) and
-                             getattr(self, "_action_current", {}).get("id") == action_id)
-        if timed_out:
+        return {"succeeded": succeeded, "summary": summary,
+                "session_id": session_id, "match_method": match_method}
+
+    def _action_child_command(self, action_file: Path) -> list[str]:
+        base = [sys.executable]
+        if not getattr(sys, "frozen", False):
+            base += ["-m", "asset_agent.agent"]
+        return base + ["--run-action", str(action_file), "--data-dir", str(self.data_dir)]
+
+    @staticmethod
+    def _display_exit_code(exit_code: int) -> int:
+        # Windows exposes NTSTATUS process exits as unsigned DWORDs through
+        # subprocess. Render the equivalent signed value used in crash reports.
+        return exit_code - (1 << 32) if exit_code > 0x7FFFFFFF else exit_code
+
+    def _write_restricted_action_file(self, path: Path, action: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            icacls = os.path.join(os.environ.get("SystemRoot", r"C:\\Windows"), "System32", "icacls.exe")
+            directory_acl = subprocess.run(
+                [icacls, str(path.parent), "/inheritance:r", "/grant:r",
+                 "*S-1-5-18:(OI)(CI)(F)", "*S-1-5-32-544:(OI)(CI)(F)"],
+                capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if directory_acl.returncode != 0:
+                raise RuntimeError((directory_acl.stderr or directory_acl.stdout or "Could not secure action directory").strip())
+        path.write_text(json.dumps(action), encoding="utf-8")
+        if os.name == "nt":
+            file_acl = subprocess.run(
+                [icacls, str(path), "/inheritance:r", "/grant:r",
+                 "*S-1-5-18:(F)", "*S-1-5-32-544:(F)"],
+                capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if file_acl.returncode != 0:
+                raise RuntimeError((file_acl.stderr or file_acl.stdout or "Could not secure action file").strip())
+
+    def perform_approved_action(self, action: dict | None = None) -> None:
+        if action is None:
+            try:
+                result = self.transport.next_action(self.config.credential)
+            except Exception as exc:
+                event(self.logger, "ENDPOINT_ACTION_POLL_FAILED", exception_type=type(exc).__name__, error=str(exc))
+                return
+            action = result.get("action") if isinstance(result, dict) else None
+        if not action:
             return
+        action_id = int(action["id"])
+        action_type = str(action.get("action_type") or "")
+        staging = self.data_dir / "action-staging"
+        token = secrets.token_hex(16)
+        action_file = staging / f"action-{token}.json"
+        result_file = staging / f"action-{token}.result.json"
+        process = None
+        started = time.monotonic()
+        timed_out = False
+        try:
+            self._write_restricted_action_file(action_file, action)
+            process = subprocess.Popen(self._action_child_command(action_file),
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            event(self.logger, "ENDPOINT_ACTION_CHILD_STARTED", action_id=action_id, pid=process.pid)
+            try:
+                exit_code = process.wait(timeout=90)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                process.kill()
+                try:
+                    exit_code = process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    exit_code = process.returncode if process.returncode is not None else -9
+                summary = "Action timed out on the endpoint"
+                succeeded = False
+                event(self.logger, "ENDPOINT_ACTION_TIMEOUT", action_id=action_id, action_type=action_type)
+            duration = round(time.monotonic() - started, 3)
+            displayed_exit_code = self._display_exit_code(exit_code)
+            event(self.logger, "ENDPOINT_ACTION_CHILD_EXITED", action_id=action_id,
+                  exit_code=displayed_exit_code, duration_seconds=duration)
+            if not timed_out:
+                if exit_code != 0 or not result_file.is_file():
+                    succeeded = False
+                    summary = f"The endpoint action process ended unexpectedly (exit code {displayed_exit_code})"
+                    event(self.logger, "ENDPOINT_ACTION_CHILD_FAILED", action_id=action_id,
+                          exit_code=displayed_exit_code)
+                else:
+                    child_result = json.loads(result_file.read_text(encoding="utf-8"))
+                    succeeded = bool(child_result["succeeded"])
+                    summary = str(child_result["summary"])
+        except Exception as exc:
+            succeeded = False
+            exit_code = process.returncode if process is not None else "not started"
+            if isinstance(exit_code, int):
+                exit_code = self._display_exit_code(exit_code)
+            summary = f"The endpoint action process ended unexpectedly (exit code {exit_code})"
+            event(self.logger, "ENDPOINT_ACTION_CHILD_FAILED", action_id=action_id,
+                  exit_code=exit_code, exception_type=type(exc).__name__, error=str(exc))
+        finally:
+            action_file.unlink(missing_ok=True)
+            result_file.unlink(missing_ok=True)
         try:
             self.transport.action_result(self.config.credential, action_id, succeeded, summary)
             event(self.logger, "ENDPOINT_ACTION_COMPLETED", action_id=action_id,
@@ -509,6 +593,20 @@ def watchdog_restart_reason(scheduler: Scheduler, maximum_heartbeat_age: int = 3
     return None
 
 
+def run_action_child(action_file: Path, data_dir: Path) -> int:
+    """Run one endpoint action without loading enrollment or agent configuration."""
+    result_file = action_file.with_name(action_file.stem + ".result.json")
+    logger = configure_logging(data_dir / "agent.log")
+    try:
+        action = json.loads(action_file.read_text(encoding="utf-8"))
+        result = Agent.execute_approved_action(action, logger=logger)
+    except Exception as exc:
+        result = {"succeeded": False, "summary": f"{type(exc).__name__}: {exc}",
+                  "session_id": None, "match_method": "error"}
+    result_file.write_text(json.dumps(result), encoding="utf-8")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Northstar Windows endpoint inventory agent")
     parser.add_argument("--data-dir", type=Path, default=default_data_dir())
@@ -520,7 +618,10 @@ def main(argv=None) -> int:
     parser.add_argument("--tls-pin", default="")
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--heartbeat-once", action="store_true")
+    parser.add_argument("--run-action", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.run_action:
+        return run_action_child(args.run_action, args.data_dir)
     config_path = args.data_dir / "config.json"
     config = AgentConfig.load(config_path) if config_path.exists() else AgentConfig(server_url=args.server or "")
     if args.server:
