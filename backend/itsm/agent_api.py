@@ -32,7 +32,7 @@ from .security import STAFF_ROLES, current_user, get_current_session, require_ro
 from .services import audit, notify
 
 router = APIRouter(prefix="/api")
-CURRENT_ENDPOINT_AGENT_VERSION = "0.1.44"
+CURRENT_ENDPOINT_AGENT_VERSION = "0.1.47"
 AGENT_CHECK_IN_GRACE = timedelta(minutes=5)
 
 
@@ -211,6 +211,7 @@ class FrozenAppDetection(BaseModel):
 
 ENDPOINT_ACTION_MAX_ATTEMPTS = 5
 ENDPOINT_ACTION_STALE_SECONDS = 60
+ENDPOINT_ACTION_NO_RESPONSE_SECONDS = 180
 
 
 _AGENT_INSTALLER_NAME = re.compile(r"NorthstarEndpointAgent-Setup-(\d+)\.(\d+)\.(\d+)\.exe$", re.I)
@@ -416,7 +417,35 @@ def _create_auto_approved_action(db: Session, ticket: Ticket, agent: EndpointAge
 
 
 def _recover_stale_endpoint_actions(db: Session, actor_id: int | None = None,
-                                    agent_id: int | None = None) -> tuple[int, int]:
+                                    agent_id: int | None = None,
+                                    ticket_id: int | None = None) -> tuple[int, int]:
+    no_response_threshold = now() - timedelta(seconds=ENDPOINT_ACTION_NO_RESPONSE_SECONDS)
+    no_response_conditions = [
+        EndpointAction.status == "Approved",
+        EndpointAction.dispatched_at.is_not(None),
+        EndpointAction.dispatched_at < no_response_threshold,
+    ]
+    if agent_id is not None:
+        no_response_conditions.append(EndpointAction.agent_id == agent_id)
+    if ticket_id is not None:
+        no_response_conditions.append(EndpointAction.ticket_id == ticket_id)
+    unresponsive = db.scalars(
+        select(EndpointAction).where(*no_response_conditions).with_for_update()
+    ).all()
+    failed = 0
+    for item in unresponsive:
+        item.status = "Failed"
+        item.completed_at = now()
+        item.result_summary = "Agent did not respond"
+        ticket = db.get(Ticket, item.ticket_id)
+        if ticket:
+            db.add(TicketMessage(ticket_id=ticket.id, author_id=None,
+                                 body="Endpoint action failed: Agent did not respond. You can retry the action.",
+                                 kind="internal", source="endpoint_action"))
+        audit(db, "endpoint_action.no_response", "endpoint_action", item.id, actor_id,
+              new={"ticket_id": item.ticket_id, "result_summary": item.result_summary})
+        failed += 1
+
     stale_threshold = now() - timedelta(seconds=ENDPOINT_ACTION_STALE_SECONDS)
     stale_delivery = or_(
         EndpointAction.status == "Dispatched",
@@ -427,8 +456,10 @@ def _recover_stale_endpoint_actions(db: Session, actor_id: int | None = None,
                   EndpointAction.dispatched_at < stale_threshold]
     if agent_id is not None:
         conditions.append(EndpointAction.agent_id == agent_id)
+    if ticket_id is not None:
+        conditions.append(EndpointAction.ticket_id == ticket_id)
     stale_actions = db.scalars(select(EndpointAction).where(*conditions).with_for_update()).all()
-    recovered = failed = 0
+    recovered = 0
     for item in stale_actions:
         if item.status == "Dispatched" and item.retry_count < ENDPOINT_ACTION_MAX_ATTEMPTS:
             item.status = "Approved"
@@ -846,6 +877,8 @@ def ticket_endpoint_actions(ticket_id: int, user: User = Depends(current_user), 
     if not ticket or (user.id not in {ticket.requester_id, ticket.assigned_user_id} and user.role not in STAFF_ROLES):
         raise HTTPException(404, "Ticket not found")
     agent = _ticket_agent(db, ticket)
+    _recover_stale_endpoint_actions(db, actor_id=user.id, ticket_id=ticket.id)
+    db.commit()
     actions = db.scalars(select(EndpointAction).where(EndpointAction.ticket_id == ticket.id)
                          .order_by(EndpointAction.created_at.desc())).all()
     return {"agent": _agent_device_summary(db, agent),

@@ -1,4 +1,9 @@
-param([string]$EnrollmentCode = "")
+param(
+    [string]$EnrollmentCode = "",
+    [string]$EnrollmentCodeFile = "",
+    [string]$InstallRoot = "",
+    [string]$DataRoot = ""
+)
 $ErrorActionPreference = "Stop"
 $errorLog = Join-Path $env:ProgramData "NorthstarEndpointAgent-install-error.log"
 Remove-Item -LiteralPath $errorLog -Force -ErrorAction SilentlyContinue
@@ -8,11 +13,16 @@ trap {
     Write-Error $details
     exit 1
 }
-$dataRoot = Join-Path $env:ProgramData "NorthstarEndpointAgent"
-$configPath = Join-Path $dataRoot "config.json"
+$agentDataRoot = if ($DataRoot) { $DataRoot } else { Join-Path $env:ProgramData "NorthstarEndpointAgent" }
+$configPath = Join-Path $agentDataRoot "config.json"
 $enrollmentToken = ""
 $tlsCertificateSha256 = ""
 $rootCertificateBytes = $null
+$stagedTokenPath = $null
+if ($EnrollmentCodeFile) {
+    try { $EnrollmentCode = (Get-Content -LiteralPath $EnrollmentCodeFile -Raw).Trim() }
+    catch { throw "The staged enrollment code could not be read." }
+}
 if ($EnrollmentCode.Trim()) {
     $parts = $EnrollmentCode.Trim().Split('.')
     if (($parts.Count -lt 2 -or $parts.Count -gt 4) -or -not $parts[0] -or -not $parts[1]) {
@@ -67,10 +77,27 @@ try {
     }
     $powerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
     $enterpriseScript = Join-Path $PSScriptRoot "install-enterprise.ps1"
+    $enterpriseArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $enterpriseScript,
+        "-ServerUrl", $serverUrl)
+    if ($tlsCertificateSha256) { $enterpriseArguments += @("-TlsCertificateSha256", $tlsCertificateSha256) }
+    if ($InstallRoot) { $enterpriseArguments += @("-InstallRoot", $InstallRoot) }
+    if ($DataRoot) { $enterpriseArguments += @("-DataRoot", $DataRoot) }
+    if ($enrollmentToken) {
+        $stagingRoot = Join-Path $env:ProgramData "NorthstarEndpointAgent-staging"
+        New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
+        & icacls.exe $stagingRoot /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "The enrollment staging directory could not be secured." }
+        $stagedTokenPath = Join-Path $stagingRoot ("enrollment-" + $PID + "-" + [guid]::NewGuid().ToString("N") + ".token")
+        Set-Content -LiteralPath $stagedTokenPath -Value $enrollmentToken -NoNewline -Encoding ascii
+        & icacls.exe $stagedTokenPath /inheritance:r /grant:r "*S-1-5-18:(F)" "*S-1-5-32-544:(F)" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "The staged enrollment token could not be secured." }
+        $enterpriseArguments += @("-EnrollmentTokenFile", $stagedTokenPath)
+    }
+    $enrollmentToken = $null
     $previousPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
-        $enterpriseOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $enterpriseScript -ServerUrl $serverUrl -EnrollmentToken $enrollmentToken -TlsCertificateSha256 $tlsCertificateSha256 2>&1
+        $enterpriseOutput = & $powerShell @enterpriseArguments 2>&1
         $enterpriseExitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference
@@ -83,6 +110,10 @@ try {
     $details = ($_ | Out-String).Trim()
     Set-Content -LiteralPath $errorLog -Value $details -Encoding UTF8
     throw
+} finally {
+    if ($stagedTokenPath) {
+        Remove-Item -LiteralPath $stagedTokenPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # install-enterprise.ps1 registers and starts the on-demand BUILTIN\Users tray

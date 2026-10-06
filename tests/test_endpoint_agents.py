@@ -112,7 +112,7 @@ def test_agent_rejects_wrong_device_and_revocation(client):
     assert devices.status_code == 200
     agent = next(item for item in devices.json() if item["device_id_suffix"] == DEVICE_ID[-8:])
     assert agent["agent_version"] == "0.1.0"
-    assert agent["current_agent_version"] == "0.1.44"
+    assert agent["current_agent_version"] == "0.1.47"
     assert agent["is_outdated"] is True
     assert agent["check_in_overdue"] is False
     assert agent["last_seen_at"]
@@ -274,15 +274,16 @@ def test_staff_can_auto_approve_frozen_app_closure(client):
         "agent_version": "0.1.37", "schema_version": 1,
     })
     auth = {"Authorization": f"Bearer {enrolled.json()['credential']}"}
-    device_inventory = inventory(device_id=device_id, hostname="AUTO-CLOSE-PC", serial="AUTO-CLOSE-001")
+    device_inventory = inventory(email="user3@example.test", device_id=device_id,
+                                 hostname="AUTO-CLOSE-PC", serial="AUTO-CLOSE-001")
     assert client.put("/api/agent/inventory", json=device_inventory, headers=auth).status_code == 200
     assert client.put("/api/agent/inventory", json=device_inventory, headers=auth).status_code == 200
     with SessionLocal() as db:
-        requester = db.query(User).filter_by(username="user1").one()
+        requester = db.query(User).filter_by(username="user3").one()
         ticket = db.query(Ticket).filter(Ticket.requester_id == requester.id,
                                          Ticket.assigned_user_id.is_not(None)).first()
         ticket_id = ticket.id
-    csrf = login_as(client, "user1")
+    csrf = login_as(client, "user3")
     client.headers.update({"X-CSRF-Token": csrf})
     forbidden = client.post(f"/api/tickets/{ticket_id}/auto-close-application", json={
         "action_type": "terminate_process", "target": "EXCEL.EXE",
@@ -351,6 +352,34 @@ def test_admin_recovers_and_eventually_fails_legacy_dispatched_actions(client):
         item = db.get(EndpointAction, action_id)
         assert item.status == "Failed"
         assert "timed out after 5 attempts" in item.result_summary
+
+
+def test_approved_action_without_result_is_shown_as_agent_did_not_respond(client):
+    with SessionLocal() as db:
+        requester = db.query(User).filter_by(username="user1").one()
+        admin = db.query(User).filter_by(username="admin").one()
+        agent = EndpointAgent(
+            organization_id=requester.organization_id,
+            device_id="0123456789abcdef" * 4,
+            credential_hash="fedcba9876543210" * 4,
+            hostname="NO-RESPONSE-PC", status="Online",
+        )
+        db.add(agent); db.flush()
+        ticket = db.query(Ticket).filter(Ticket.requester_id == requester.id).first()
+        item = EndpointAction(
+            organization_id=ticket.organization_id, agent_id=agent.id, ticket_id=ticket.id,
+            action_type="terminate_process", target="EXCEL.EXE", requested_by_id=admin.id,
+            status="Approved", approved_at=datetime.now(timezone.utc),
+            dispatched_at=datetime.now(timezone.utc) - timedelta(seconds=181), retry_count=1,
+        )
+        db.add(item); db.commit(); action_id = item.id; ticket_id = ticket.id
+    csrf = login_as(client, "admin")
+    client.headers.update({"X-CSRF-Token": csrf})
+    response = client.get(f"/api/tickets/{ticket_id}/endpoint-actions")
+    assert response.status_code == 200, response.text
+    action = next(row for row in response.json()["actions"] if row["id"] == action_id)
+    assert action["status"] == "Failed"
+    assert action["result_summary"] == "Agent did not respond"
 
 
 def test_agent_matches_employee_id_and_queues_unknown_identity_for_review(client):

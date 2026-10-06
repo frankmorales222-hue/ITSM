@@ -1,0 +1,1 @@
+Runs endpoint remediation in an isolated child process so native failures or security-tool termination cannot stop the main agent from heartbeating, while retaining the watchdog, automatic restart, diagnostic logging, and secure installer fixes.

@@ -2,8 +2,12 @@ $ErrorActionPreference = "SilentlyContinue"
 $taskNames = @("Northstar Endpoint Agent", "Northstar Endpoint Agent - User Logon Inventory", "Northstar Endpoint Tray Launcher")
 $processNames = @("NorthstarEndpointAgent", "NorthstarEndpointTray")
 $diagnostic = Join-Path $env:ProgramData "NorthstarEndpointAgent-stop-error.log"
+$stopLog = Join-Path $env:ProgramData "NorthstarEndpointAgent\agent-stops.log"
 $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
 Remove-Item -LiteralPath $diagnostic -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path (Split-Path -Parent $stopLog) -Force | Out-Null
+$caller = if ($MyInvocation.ScriptName) { $MyInvocation.ScriptName } else { "installer" }
+Add-Content -LiteralPath $stopLog -Value ("{0} caller={1} reason=agent upgrade" -f [datetime]::UtcNow.ToString("o"), $caller) -Encoding UTF8
 
 # Keep the interactive-startup registration intact. The tray is stopped below
 # only so its executable can be replaced. Removing this registration during an

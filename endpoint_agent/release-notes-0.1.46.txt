@@ -1,0 +1,1 @@
+Keeps endpoint heartbeats responsive during endpoint actions, times out hung actions, adds diagnostic lifecycle logging, and automatically restarts a stopped agent while retaining the 0.1.45 self-service installer security fixes.

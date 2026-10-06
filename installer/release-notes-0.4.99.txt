@@ -1,0 +1,1 @@
+Isolates endpoint remediation so a native crash or security-tool termination cannot stop agent heartbeats, automatically restarts stopped agents, reports agents that do not respond, and retains the secure self-service install and repair fixes.

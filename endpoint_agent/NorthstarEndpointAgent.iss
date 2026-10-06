@@ -1,5 +1,5 @@
 #define MyAppName "Northstar Endpoint Agent"
-#define MyAppVersion "0.1.44"
+#define MyAppVersion "0.1.47"
 
 [Setup]
 AppId={{6894E363-B668-4F80-9318-405974E3CE20}
@@ -139,6 +139,11 @@ var
   ErrorDetails: AnsiString;
   ErrorLog: String;
   WarningLog: String;
+  EnrollmentCodeValue: String;
+  EnrollmentCodePath: String;
+  EnrollmentStagingRoot: String;
+  ExecSucceeded: Boolean;
+  AclResultCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
@@ -161,11 +166,42 @@ begin
     end;
 
     Parameters := '-NoProfile -ExecutionPolicy Bypass -File ' +
-      AddQuotes(ExpandConstant('{app}\install-self-service.ps1')) + ' -EnrollmentCode ' +
-      AddQuotes(Trim(EnrollmentPage.Values[0]));
+      AddQuotes(ExpandConstant('{app}\install-self-service.ps1'));
+    EnrollmentCodeValue := Trim(EnrollmentPage.Values[0]);
+    EnrollmentCodePath := '';
+    if EnrollmentCodeValue <> '' then
+    begin
+      EnrollmentStagingRoot := ExpandConstant('{commonappdata}\NorthstarEndpointAgent-staging');
+      ForceDirectories(EnrollmentStagingRoot);
+      if (not Exec(ExpandConstant('{sys}\icacls.exe'), AddQuotes(EnrollmentStagingRoot) +
+        ' /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)(F)" "*S-1-5-32-544:(OI)(CI)(F)"',
+        '', SW_HIDE, ewWaitUntilTerminated, AclResultCode)) or (AclResultCode <> 0) then
+      begin
+        SaveStringToFile(ErrorLog, 'The enrollment staging directory could not be secured.', False);
+        ConfigurationFailed := True;
+        InstallFinalized := True;
+        exit;
+      end;
+      EnrollmentCodePath := EnrollmentStagingRoot + '\enrollment-code.tmp';
+      DeleteFile(EnrollmentCodePath);
+      SaveStringToFile(EnrollmentCodePath, EnrollmentCodeValue, False);
+      if (not Exec(ExpandConstant('{sys}\icacls.exe'), AddQuotes(EnrollmentCodePath) +
+        ' /inheritance:r /grant:r "*S-1-5-18:(F)" "*S-1-5-32-544:(F)"',
+        '', SW_HIDE, ewWaitUntilTerminated, AclResultCode)) or (AclResultCode <> 0) then
+      begin
+        DeleteFile(EnrollmentCodePath);
+        SaveStringToFile(ErrorLog, 'The staged enrollment code could not be secured.', False);
+        ConfigurationFailed := True;
+        InstallFinalized := True;
+        exit;
+      end;
+      Parameters := Parameters + ' -EnrollmentCodeFile ' + AddQuotes(EnrollmentCodePath);
+    end;
     WizardForm.StatusLabel.Caption := 'Enrolling this computer and uploading its first inventory...';
-    if (not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
-      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode)) or (ResultCode <> 0) then
+    ExecSucceeded := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
+      ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if EnrollmentCodePath <> '' then DeleteFile(EnrollmentCodePath);
+    if (not ExecSucceeded) or (ResultCode <> 0) then
     begin
       ConfigurationFailed := True;
       { Do not raise an exception here. Inno rolls back every installed file
