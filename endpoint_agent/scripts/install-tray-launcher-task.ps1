@@ -5,6 +5,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+trap {
+    Write-Error (($_ | Out-String).Trim())
+    exit 1
+}
 $launcher = Join-Path $InstallRoot "launch-tray.ps1"
 if (-not (Test-Path -LiteralPath $launcher)) {
     throw "The Northstar tray launcher was not found: $launcher"
@@ -20,7 +24,7 @@ $taskXml = @"
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Author>Northstar Desk</Author><Description>Launches the Northstar Endpoint tray for signed-in users after install or update.</Description></RegistrationInfo>
   <Triggers />
-  <Principals><Principal id="Users"><GroupId>S-1-5-32-545</GroupId><LogonType>Group</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Principals><Principal id="Users"><GroupId>S-1-5-32-545</GroupId><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings><MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate><StartWhenAvailable>false</StartWhenAvailable><RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable><AllowStartOnDemand>true</AllowStartOnDemand><Enabled>true</Enabled><Hidden>false</Hidden><RunOnlyIfIdle>false</RunOnlyIfIdle><WakeToRun>false</WakeToRun><ExecutionTimeLimit>PT1M</ExecutionTimeLimit><Priority>7</Priority></Settings>
   <Actions Context="Users"><Exec><Command>$commandXml</Command><Arguments>$argumentsXml</Arguments><WorkingDirectory>$workingDirectoryXml</WorkingDirectory></Exec></Actions>
 </Task>
@@ -33,13 +37,26 @@ $xmlPath = Join-Path $env:TEMP "northstar-tray-launcher-$PID.xml"
 try {
     Set-Content -LiteralPath $xmlPath -Value $taskXml -Encoding Unicode
     $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
-    $output = & $schtasks /Create /TN $TaskName /XML $xmlPath /F 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not register '$TaskName': $($output -join ' ')"
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $schtasks /Create /TN $TaskName /XML $xmlPath /F 2>&1
+        $createExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
     }
-    $registeredText = (& $schtasks /Query /TN $TaskName /XML 2>&1) -join "`n"
-    if ($LASTEXITCODE -ne 0) {
-        throw "The Northstar tray launcher task could not be queried after registration."
+    if ($createExitCode -ne 0) {
+        throw "Could not register '$TaskName' (exit code $createExitCode): $($output -join ' ')"
+    }
+    try {
+        $ErrorActionPreference = "Continue"
+        $registeredText = (& $schtasks /Query /TN $TaskName /XML 2>&1) -join "`n"
+        $queryExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($queryExitCode -ne 0) {
+        throw "The Northstar tray launcher task could not be queried after registration (exit code $queryExitCode)."
     }
     [xml]$registered = $registeredText
     $namespace = New-Object Xml.XmlNamespaceManager($registered.NameTable)
@@ -53,10 +70,13 @@ try {
         catch { $groupSid = "" }
     }
     $runLevel = [string]$principal.RunLevel
+    $logonType = $principal.SelectSingleNode("t:LogonType", $namespace)
     if (-not $principal -or $groupSid -ne "S-1-5-32-545" -or
-        ($runLevel -and $runLevel -ne "LeastPrivilege")) {
+        $logonType -or ($runLevel -and $runLevel -ne "LeastPrivilege")) {
         throw "The Northstar tray launcher task principal was not registered safely."
     }
 } finally {
     Remove-Item -LiteralPath $xmlPath -Force -ErrorAction SilentlyContinue
 }
+$global:LASTEXITCODE = 0
+exit 0

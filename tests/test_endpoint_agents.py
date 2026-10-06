@@ -112,7 +112,7 @@ def test_agent_rejects_wrong_device_and_revocation(client):
     assert devices.status_code == 200
     agent = next(item for item in devices.json() if item["device_id_suffix"] == DEVICE_ID[-8:])
     assert agent["agent_version"] == "0.1.0"
-    assert agent["current_agent_version"] == "0.1.43"
+    assert agent["current_agent_version"] == "0.1.44"
     assert agent["is_outdated"] is True
     assert agent["check_in_overdue"] is False
     assert agent["last_seen_at"]

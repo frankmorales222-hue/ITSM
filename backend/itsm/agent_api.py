@@ -32,7 +32,7 @@ from .security import STAFF_ROLES, current_user, get_current_session, require_ro
 from .services import audit, notify
 
 router = APIRouter(prefix="/api")
-CURRENT_ENDPOINT_AGENT_VERSION = "0.1.43"
+CURRENT_ENDPOINT_AGENT_VERSION = "0.1.44"
 AGENT_CHECK_IN_GRACE = timedelta(minutes=5)
 
 

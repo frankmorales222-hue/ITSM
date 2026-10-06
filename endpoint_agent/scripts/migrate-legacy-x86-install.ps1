@@ -31,11 +31,15 @@ function Get-NorthstarTaskXml {
     try {
         $ErrorActionPreference = "Continue"
         $xmlText = (& $schtasks /Query /TN $Name /XML 2>$null | Out-String)
-        if ($LASTEXITCODE -ne 0) { return $null }
+        if ($LASTEXITCODE -ne 0) {
+            $global:LASTEXITCODE = 0
+            return $null
+        }
         [xml]$xml = $xmlText
         return $xml
     } finally {
         $ErrorActionPreference = $previousPreference
+        $global:LASTEXITCODE = 0
     }
 }
 
@@ -130,3 +134,5 @@ if (Test-Path -LiteralPath $uninstallRoot) {
 }
 
 Write-Host "Northstar Endpoint Agent task paths and legacy x86 installation are current."
+$global:LASTEXITCODE = 0
+exit 0

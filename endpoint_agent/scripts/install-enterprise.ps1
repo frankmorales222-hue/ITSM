@@ -83,6 +83,7 @@ function Stop-NorthstarTaskIfPresent {
         & $schtasks /End /TN $Name *> $null
     } finally {
         $ErrorActionPreference = $previousPreference
+        $global:LASTEXITCODE = 0
     }
 }
 Stop-NorthstarTaskIfPresent -Name $taskName
@@ -132,6 +133,7 @@ if ((Test-Path -LiteralPath $configPath) -and $EnrollmentToken) {
         $backup = Join-Path $DataRoot ("config.json.bak-" + (Get-Date -Format "yyyyMMddHHmmss"))
         Move-Item -LiteralPath $configPath -Destination $backup
         Write-InstallWarning "The retained endpoint credential was rejected and was backed up to $backup before re-enrollment. $($credentialOutput -join ' ')"
+        $global:LASTEXITCODE = 0
     }
 }
 
@@ -158,6 +160,7 @@ if (-not (Test-Path -LiteralPath $configPath)) {
     }
     if ($agentExitCode -ne 0) {
         Write-InstallWarning "Endpoint enrollment succeeded, but the first inventory failed (exit code $agentExitCode). The scheduled agent will retry. $($agentOutput -join ' ')"
+        $global:LASTEXITCODE = 0
     }
 } else {
     # A repair/update must never be marked failed merely because the optional
@@ -211,7 +214,18 @@ Register-NorthstarTask -Name $logonTaskName -TriggerXml '<LogonTrigger><Enabled>
     -Arguments ('--data-dir "' + $escapedDataRoot + '" --once') -XmlPath (Join-Path $env:TEMP "northstar-logon-task.xml")
 & $schtasks /Run /TN $taskName | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Northstar was installed but its startup task could not be started." }
-& $targetLegacyMigration -InstallRoot $InstallRoot
+$powerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$previousPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = "Continue"
+    $migrationOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $targetLegacyMigration -InstallRoot $InstallRoot 2>&1
+    $migrationExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousPreference
+}
+if ($migrationExitCode -ne 0) {
+    throw "Legacy installation migration failed (exit code $migrationExitCode): $($migrationOutput -join ' ')"
+}
 $deadline = (Get-Date).AddSeconds(30)
 do {
     $confirmed = @(Get-CimInstance Win32_Process -Filter "Name='NorthstarEndpointAgent.exe'" -ErrorAction SilentlyContinue |
@@ -220,11 +234,21 @@ do {
 } while (-not $confirmed -and (Get-Date) -lt $deadline)
 if (-not $confirmed) { throw "The new Northstar Endpoint Agent was not confirmed running from $targetExecutable within 30 seconds." }
 try {
-    & $targetTrayTaskInstaller -InstallRoot $InstallRoot
+    try {
+        $ErrorActionPreference = "Continue"
+        $trayOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $targetTrayTaskInstaller -InstallRoot $InstallRoot 2>&1
+        $trayExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($trayExitCode -ne 0) { throw "The tray launcher task could not be registered (exit code $trayExitCode): $($trayOutput -join ' ')" }
     & $schtasks /Run /TN "Northstar Endpoint Tray Launcher" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "The tray launcher task could not be started (exit code $LASTEXITCODE)." }
 } catch {
     Write-InstallWarning "The endpoint agent is running, but tray startup needs attention: $($_.Exception.Message)"
+    $global:LASTEXITCODE = 0
 }
 Write-Host "Northstar Endpoint Agent installed for all users and reporting to $ServerUrl"
 Write-Host "The tray companion was requested for signed-in users and will also start at future sign-ins."
+$global:LASTEXITCODE = 0
+exit 0

@@ -65,8 +65,20 @@ try {
             Remove-Item -LiteralPath $rootCertificatePath -Force -ErrorAction SilentlyContinue
         }
     }
-    & (Join-Path $PSScriptRoot "install-enterprise.ps1") -ServerUrl $serverUrl -EnrollmentToken $enrollmentToken -TlsCertificateSha256 $tlsCertificateSha256
-    if ($LASTEXITCODE -ne 0) { throw "Northstar Endpoint Agent installation failed with exit code $LASTEXITCODE." }
+    $powerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $enterpriseScript = Join-Path $PSScriptRoot "install-enterprise.ps1"
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $enterpriseOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $enterpriseScript -ServerUrl $serverUrl -EnrollmentToken $enrollmentToken -TlsCertificateSha256 $tlsCertificateSha256 2>&1
+        $enterpriseExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($enterpriseExitCode -ne 0) {
+        throw "Northstar Endpoint Agent installation failed with exit code $enterpriseExitCode. $($enterpriseOutput -join ' ')"
+    }
+    $enterpriseOutput | Write-Output
 } catch {
     $details = ($_ | Out-String).Trim()
     Set-Content -LiteralPath $errorLog -Value $details -Encoding UTF8
@@ -76,3 +88,5 @@ try {
 # install-enterprise.ps1 registers and starts the on-demand BUILTIN\Users tray
 # task. Inno invokes the same task after every update, including SYSTEM-driven
 # automatic updates, while the Common Startup shortcut handles future sign-ins.
+$global:LASTEXITCODE = 0
+exit 0

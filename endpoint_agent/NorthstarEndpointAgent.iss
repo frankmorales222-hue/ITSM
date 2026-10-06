@@ -1,5 +1,5 @@
 #define MyAppName "Northstar Endpoint Agent"
-#define MyAppVersion "0.1.43"
+#define MyAppVersion "0.1.44"
 
 [Setup]
 AppId={{6894E363-B668-4F80-9318-405974E3CE20}
@@ -204,6 +204,8 @@ end;
 
 function GetCustomSetupExitCode(): Integer;
 begin
+  { Only required migration/enrollment/agent-start failures set
+    ConfigurationFailed. Tray registration and launch failures are warnings. }
   if ConfigurationFailed then Result := 1 else Result := 0;
 end;
 

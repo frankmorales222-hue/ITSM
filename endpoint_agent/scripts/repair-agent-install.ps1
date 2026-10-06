@@ -7,6 +7,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+trap {
+    Write-Error (($_ | Out-String).Trim())
+    exit 1
+}
 $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
 $powerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 if (-not $CurrentExecutable) { $CurrentExecutable = Join-Path $InstallRoot "NorthstarEndpointAgent.exe" }
@@ -18,7 +22,10 @@ function Get-TaskXml([string]$Name) {
     try {
         $ErrorActionPreference = "Continue"
         $text = (& $schtasks /Query /TN $Name /XML 2>$null | Out-String)
-        if ($LASTEXITCODE -ne 0) { return $null }
+        if ($LASTEXITCODE -ne 0) {
+            $global:LASTEXITCODE = 0
+            return $null
+        }
         return [xml]$text
     } finally { $ErrorActionPreference = $oldPreference }
 }
@@ -92,14 +99,33 @@ $migration = Join-Path $InstallRoot "migrate-legacy-x86-install.ps1"
 if (Test-Path -LiteralPath $migration) {
     $legacyRoot = "${env:ProgramFiles(x86)}\Northstar Endpoint Agent"
     $hadLegacyInstall = Test-Path -LiteralPath $legacyRoot
-    & $migration -InstallRoot $InstallRoot | Out-Null
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $migrationOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $migration -InstallRoot $InstallRoot 2>&1
+        $migrationExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($migrationExitCode -ne 0) {
+        throw "Legacy installation migration failed (exit code $migrationExitCode): $($migrationOutput -join ' ')"
+    }
     if ($hadLegacyInstall -and -not (Test-Path -LiteralPath $legacyRoot)) {
         $changes.Add("Removed legacy 32-bit installation")
     }
 }
 
 try {
-    & (Join-Path $InstallRoot "install-tray-launcher-task.ps1") -InstallRoot $InstallRoot
+    $trayInstaller = Join-Path $InstallRoot "install-tray-launcher-task.ps1"
+    $trayPreviousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $trayOutput = & $powerShell -NoProfile -ExecutionPolicy Bypass -File $trayInstaller -InstallRoot $InstallRoot 2>&1
+        $trayExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $trayPreviousPreference
+    }
+    if ($trayExitCode -ne 0) { throw "The tray launcher task could not be registered (exit code $trayExitCode): $($trayOutput -join ' ')" }
     $trayState = Join-Path $DataRoot "tray-launch-state.json"
     $lastAttempt = [datetime]::MinValue
     if (Test-Path -LiteralPath $trayState) {
@@ -111,7 +137,10 @@ try {
     }
 } catch {
     $changes.Add("Tray launcher repair warning: $($_.Exception.Message)")
+    $global:LASTEXITCODE = 0
 }
 
 if ($changes.Count -eq 0) { Write-Output "Installation healthy; no changes required." }
 else { $changes | ForEach-Object { Write-Output $_ } }
+$global:LASTEXITCODE = 0
+exit 0

@@ -1,6 +1,7 @@
 import json
 import hashlib
 import threading
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -414,6 +415,26 @@ def test_system_install_relaunches_tray_through_users_group_task():
     assert '/Run /TN "Northstar Endpoint Tray Launcher"' in installer
 
     assert "<GroupId>S-1-5-32-545</GroupId>" in task_installer
+    task_template = task_installer.split('$taskXml = @"', 1)[1].split('"@', 1)[0]
+    task_xml = (task_template.replace("$commandXml", "powershell.exe")
+                .replace("$argumentsXml", "-NoProfile")
+                .replace("$workingDirectoryXml", "C:\\Northstar").lstrip())
+    task = ET.fromstring(task_xml)
+    namespace = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    assert task.attrib["version"] == "1.4"
+    principal = task.find("./t:Principals/t:Principal", namespace)
+    assert principal is not None
+    assert principal.findtext("t:GroupId", namespaces=namespace) == "S-1-5-32-545"
+    assert principal.find("t:LogonType", namespace) is None
+    assert principal.findtext("t:RunLevel", namespaces=namespace) == "LeastPrivilege"
+    assert task.find("./t:Triggers", namespace) is not None
+    assert task.findtext("./t:Settings/t:MultipleInstancesPolicy", namespaces=namespace) == "Parallel"
+    assert task.findtext("./t:Settings/t:ExecutionTimeLimit", namespaces=namespace) == "PT1M"
+    actions = task.find("./t:Actions", namespace)
+    assert actions is not None and actions.attrib["Context"] == "Users"
+    assert actions.find("./t:Exec/t:Command", namespace) is not None
+    assert actions.find("./t:Exec/t:Arguments", namespace) is not None
+    assert actions.find("./t:Exec/t:WorkingDirectory", namespace) is not None
     assert "<RunLevel>LeastPrivilege</RunLevel>" in task_installer
     assert "<Triggers />" in task_installer
     assert "-WindowStyle Hidden" in task_installer
@@ -438,17 +459,44 @@ def test_system_install_relaunches_tray_through_users_group_task():
     assert 'ProgramData' not in migration
 
 
-def test_agent_0143_release_metadata_is_aligned():
+def test_installer_exit_codes_distinguish_required_and_optional_steps():
     root = Path(__file__).resolve().parents[1]
-    assert '__version__ = "0.1.43"' in (root /
+    enterprise = (root / "scripts/install-enterprise.ps1").read_text(encoding="utf-8")
+    self_service = (root / "scripts/install-self-service.ps1").read_text(encoding="utf-8")
+    repair = (root / "scripts/repair-agent-install.ps1").read_text(encoding="utf-8")
+    migration = (root / "scripts/migrate-legacy-x86-install.ps1").read_text(encoding="utf-8")
+    tray = (root / "scripts/install-tray-launcher-task.ps1").read_text(encoding="utf-8")
+    installer = (root / "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
+
+    assert 'Write-InstallWarning "The endpoint agent is running' in enterprise
+    assert enterprise.rstrip().endswith("exit 0")
+    assert "$global:LASTEXITCODE = 0" in enterprise
+    assert "$enterpriseExitCode = $LASTEXITCODE" in self_service
+    assert "if ($enterpriseExitCode -ne 0)" in self_service
+    assert self_service.rstrip().endswith("exit 0")
+    assert 'throw "Endpoint enrollment failed' in enterprise
+    assert "exit 1" in enterprise
+    assert repair.rstrip().endswith("exit 0")
+    assert migration.rstrip().endswith("exit 0")
+    assert tray.rstrip().endswith("exit 0")
+    assert "if ConfigurationFailed then Result := 1 else Result := 0" in installer
+    tray_warning = installer.split("if not ConfigurationFailed then", 1)[1].split("InstallFinalized := True", 1)[0]
+    assert "ConfigurationFailed := True" not in tray_warning
+
+
+def test_agent_0144_release_metadata_is_aligned():
+    root = Path(__file__).resolve().parents[1]
+    assert '__version__ = "0.1.44"' in (root /
         "asset_agent/__init__.py").read_text(encoding="utf-8")
-    assert 'version = "0.1.43"' in (root /
+    assert 'version = "0.1.44"' in (root /
         "pyproject.toml").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.1.43"' in (root /
+    assert '#define MyAppVersion "0.1.44"' in (root /
         "NorthstarEndpointAgent.iss").read_text(encoding="utf-8")
-    notes = (root / "release-notes-0.1.43.txt").read_text(encoding="utf-8")
-    assert "repair their own installation" in notes and "32-bit agent" in notes
+    notes = (root / "release-notes-0.1.44.txt").read_text(encoding="utf-8")
+    assert "tray launcher task definition" in notes and "successful installs" in notes
     server_installer = (root.parent / "installer/NorthstarDeskServer.iss").read_text(encoding="utf-8")
     server_builder = (root.parent / "installer/build-full-server-update.ps1").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.4.97"' in server_installer
-    assert '[string]$Version = "0.4.97"' in server_builder
+    assert '#define MyAppVersion "0.4.98"' in server_installer
+    assert '[string]$Version = "0.4.98"' in server_builder
+    server_notes = (root.parent / "installer/release-notes-0.4.98.txt").read_text(encoding="utf-8")
+    assert server_notes == notes
