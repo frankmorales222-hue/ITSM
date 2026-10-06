@@ -274,15 +274,16 @@ def test_staff_can_auto_approve_frozen_app_closure(client):
         "agent_version": "0.1.37", "schema_version": 1,
     })
     auth = {"Authorization": f"Bearer {enrolled.json()['credential']}"}
-    device_inventory = inventory(device_id=device_id, hostname="AUTO-CLOSE-PC", serial="AUTO-CLOSE-001")
+    device_inventory = inventory(email="user3@example.test", device_id=device_id,
+                                 hostname="AUTO-CLOSE-PC", serial="AUTO-CLOSE-001")
     assert client.put("/api/agent/inventory", json=device_inventory, headers=auth).status_code == 200
     assert client.put("/api/agent/inventory", json=device_inventory, headers=auth).status_code == 200
     with SessionLocal() as db:
-        requester = db.query(User).filter_by(username="user1").one()
+        requester = db.query(User).filter_by(username="user3").one()
         ticket = db.query(Ticket).filter(Ticket.requester_id == requester.id,
                                          Ticket.assigned_user_id.is_not(None)).first()
         ticket_id = ticket.id
-    csrf = login_as(client, "user1")
+    csrf = login_as(client, "user3")
     client.headers.update({"X-CSRF-Token": csrf})
     forbidden = client.post(f"/api/tickets/{ticket_id}/auto-close-application", json={
         "action_type": "terminate_process", "target": "EXCEL.EXE",
