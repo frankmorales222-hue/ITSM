@@ -9,6 +9,7 @@ import {
   getTechnicianWorkload,
 } from "@/lib/reports";
 import Nav from "@/components/Nav";
+import { StatusBadge, PriorityBadge } from "@/components/StatusBadge";
 
 function formatHours(hours: number | null): string {
   if (hours === null) return "—";
@@ -41,28 +42,28 @@ export default async function ReportsPage() {
 
       <h1>Reports</h1>
 
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
-        <div className="card" style={{ flex: "1 1 160px" }}>
+      <div className="widget-grid" style={{ marginBottom: 18 }}>
+        <div className="card stat-tile">
           <div className="muted">Open tickets</div>
-          <div style={{ fontSize: 28, fontWeight: 700 }}>{summary.open_count}</div>
+          <div className="stat-value">{summary.open_count}</div>
         </div>
-        <div className="card" style={{ flex: "1 1 160px" }}>
+        <div className="card stat-tile">
           <div className="muted">Overdue</div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: "var(--color-danger)" }}>
+          <div className="stat-value" style={{ color: "var(--color-danger)" }}>
             {summary.overdue_count}
           </div>
         </div>
-        <div className="card" style={{ flex: "1 1 160px" }}>
+        <div className="card stat-tile">
           <div className="muted">Resolved (7d)</div>
-          <div style={{ fontSize: 28, fontWeight: 700 }}>{summary.resolved_this_week}</div>
+          <div className="stat-value">{summary.resolved_this_week}</div>
         </div>
-        <div className="card" style={{ flex: "1 1 160px" }}>
+        <div className="card stat-tile">
           <div className="muted">Created (7d)</div>
-          <div style={{ fontSize: 28, fontWeight: 700 }}>{summary.created_this_week}</div>
+          <div className="stat-value">{summary.created_this_week}</div>
         </div>
-        <div className="card" style={{ flex: "1 1 160px" }}>
+        <div className="card stat-tile">
           <div className="muted">Avg. resolution time</div>
-          <div style={{ fontSize: 28, fontWeight: 700 }}>{formatHours(avgResolutionHours)}</div>
+          <div className="stat-value">{formatHours(avgResolutionHours)}</div>
         </div>
       </div>
 
@@ -73,7 +74,7 @@ export default async function ReportsPage() {
             {statusBreakdown.map((row) => (
               <tr key={row.status}>
                 <td>
-                  <span className="badge">{row.status}</span>
+                  <StatusBadge status={row.status} />
                 </td>
                 <td>{row.n}</td>
               </tr>
@@ -88,7 +89,9 @@ export default async function ReportsPage() {
           <tbody>
             {priorityBreakdown.map((row) => (
               <tr key={row.priority}>
-                <td>{row.priority}</td>
+                <td>
+                  <PriorityBadge priority={row.priority} />
+                </td>
                 <td>{row.n}</td>
               </tr>
             ))}

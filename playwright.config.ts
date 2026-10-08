@@ -43,5 +43,18 @@ export default defineConfig({
       NEXT_PUBLIC_APP_URL: BASE_URL,
     },
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    {
+      name: "unauthenticated",
+      testMatch: /auth\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "chromium",
+      testIgnore: [/auth\.spec\.ts/, /auth\.setup\.ts/],
+      use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/user.json" },
+      dependencies: ["setup"],
+    },
+  ],
 });

@@ -1,13 +1,16 @@
-// Ticket detail page — conversation (public replies only) + a reply box,
-// status control, and attachments, visible to the ticket's requester or
-// assigned technician. Internal notes are technician-only, gated
+// Ticket detail page — a unified activity timeline (replies, status
+// changes, and for technicians, internal notes/audit entries) plus a
+// reply box, status control, and attachments. Visible to the ticket's
+// requester, assigned technician, or (once approval applies) the
+// requester's manager. Internal notes stay technician-only, gated
 // server-side (not just hidden in the UI) since ticket_notes must never
-// reach the requester.
+// reach the requester — see getTimeline's includeInternal parameter.
 
 import { redirect, notFound } from "next/navigation";
 import { pool } from "@/lib/db";
-import { addReplyAndUpdateStatus, getNotesForTicket, addNote, reassignTicket, escalateTicket } from "@/lib/tickets";
+import { addReplyAndUpdateStatus, addNote, reassignTicket, escalateTicket } from "@/lib/tickets";
 import { approveTicket, rejectTicket } from "@/lib/approval";
+import { getTimeline } from "@/lib/timeline";
 import {
   getAttachmentsForTicket,
   saveAttachment,
@@ -20,6 +23,10 @@ import { getActiveTechnicians } from "@/lib/ticket-filters";
 import { isOverdue } from "@/lib/sla";
 import Nav from "@/components/Nav";
 import ConfirmSubmitButton from "@/components/ConfirmSubmitButton";
+import { StatusBadge, PriorityBadge } from "@/components/StatusBadge";
+import AjaxForm from "@/components/AjaxForm";
+import ModalTrigger from "@/components/Modal";
+import Timeline from "@/components/Timeline";
 
 const STATUSES = [
   "open",
@@ -48,20 +55,7 @@ async function getTicket(id: string) {
      WHERE t.id = $1`,
     [id]
   );
-  if (ticketResult.rows.length === 0) {
-    return null;
-  }
-
-  const repliesResult = await pool.query(
-    `SELECT r.*, u.display_name AS author_name
-     FROM ticket_replies r
-     JOIN users u ON u.id = r.author_id
-     WHERE r.ticket_id = $1
-     ORDER BY r.created_at ASC`,
-    [id]
-  );
-
-  return { ticket: ticketResult.rows[0], replies: repliesResult.rows };
+  return ticketResult.rows[0] ?? null;
 }
 
 function formatSize(bytes: number): string {
@@ -70,25 +64,17 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default async function TicketDetailPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string }>;
-}) {
+export default async function TicketDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { error } = await searchParams;
   const sessionUserId = await getSessionUserId();
   if (!sessionUserId) {
     redirect("/login");
   }
 
-  const data = await getTicket(id);
-  if (!data) {
+  const ticket = await getTicket(id);
+  if (!ticket) {
     notFound();
   }
-  const { ticket, replies } = data;
 
   const isManager = ticket.requester_manager_id === sessionUserId;
   const canView =
@@ -98,9 +84,9 @@ export default async function TicketDetailPage({
   }
 
   const isTech = await isTechnician(sessionUserId);
-  const [attachments, notes, technicians] = await Promise.all([
+  const [attachments, timeline, technicians] = await Promise.all([
     getAttachmentsForTicket(id),
-    isTech ? getNotesForTicket(id) : Promise.resolve([]),
+    getTimeline(id, isTech),
     isTech ? getActiveTechnicians() : Promise.resolve([]),
   ]);
 
@@ -116,11 +102,7 @@ export default async function TicketDetailPage({
     const hasFile = file && file.size > 0;
 
     if ((status === "resolved" || status === "closed") && ticket.approval_status === "pending") {
-      redirect(
-        `/tickets/${id}?error=${encodeURIComponent(
-          "This ticket is awaiting manager approval and can't be resolved or closed yet."
-        )}`
-      );
+      return { error: "This ticket is awaiting manager approval and can't be resolved or closed yet." };
     }
 
     if (hasFile) {
@@ -129,7 +111,7 @@ export default async function TicketDetailPage({
         await assertWithinTicketQuota(id, file);
       } catch (err) {
         if (err instanceof AttachmentValidationError) {
-          redirect(`/tickets/${id}?error=${encodeURIComponent(err.message)}`);
+          return { error: err.message };
         }
         throw err;
       }
@@ -145,8 +127,6 @@ export default async function TicketDetailPage({
     if (hasFile) {
       await saveAttachment({ ticketId: id, uploadedById: authorId, file });
     }
-
-    redirect(`/tickets/${id}`);
   }
 
   async function submitReassign(formData: FormData) {
@@ -156,10 +136,10 @@ export default async function TicketDetailPage({
       redirect("/login");
     }
     const newTechId = String(formData.get("technician") ?? "");
-    if (newTechId) {
-      await reassignTicket({ ticketId: id, newTechId, reassignedById: actorId });
+    if (!newTechId) {
+      return { error: "Select a technician first." };
     }
-    redirect(`/tickets/${id}`);
+    await reassignTicket({ ticketId: id, newTechId, reassignedById: actorId });
   }
 
   async function submitEscalate(formData: FormData) {
@@ -170,7 +150,6 @@ export default async function TicketDetailPage({
     }
     const reason = String(formData.get("reason") ?? "").trim();
     await escalateTicket({ ticketId: id, actorId, reason: reason || undefined });
-    redirect(`/tickets/${id}`);
   }
 
   async function submitApprove(formData: FormData) {
@@ -181,7 +160,6 @@ export default async function TicketDetailPage({
     }
     const note = String(formData.get("note") ?? "").trim();
     await approveTicket({ ticketId: id, approverId: actorId, note: note || undefined });
-    redirect(`/tickets/${id}`);
   }
 
   async function submitReject(formData: FormData) {
@@ -192,7 +170,6 @@ export default async function TicketDetailPage({
     }
     const note = String(formData.get("note") ?? "").trim();
     await rejectTicket({ ticketId: id, approverId: actorId, note: note || undefined });
-    redirect(`/tickets/${id}`);
   }
 
   async function submitNote(formData: FormData) {
@@ -202,10 +179,10 @@ export default async function TicketDetailPage({
       redirect("/login");
     }
     const body = String(formData.get("note") ?? "").trim();
-    if (body) {
-      await addNote({ ticketId: id, authorId, body });
+    if (!body) {
+      return { error: "Note can't be empty." };
     }
-    redirect(`/tickets/${id}`);
+    await addNote({ ticketId: id, authorId, body });
   }
 
   return (
@@ -213,12 +190,53 @@ export default async function TicketDetailPage({
       <Nav userId={sessionUserId} />
 
       <div className="card">
-        <h1>
-          {ticket.ticket_number}: {ticket.subject}
-        </h1>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+          <h1 style={{ marginBottom: 12 }}>
+            {ticket.ticket_number}: {ticket.subject}
+          </h1>
+          {isTech && (
+            <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <ModalTrigger label="Reassign" title="Reassign ticket" buttonClassName="secondary">
+                <AjaxForm action={submitReassign} successMessage="Ticket reassigned." resetOnSuccess={false}>
+                  <p className="muted">
+                    Currently assigned to: {ticket.assigned_tech_name ?? "Unassigned"}
+                  </p>
+                  <div className="field">
+                    <label htmlFor="technician">Reassign to</label>
+                    <select id="technician" name="technician" defaultValue={ticket.assigned_tech_id ?? ""}>
+                      <option value="" disabled>
+                        Select a technician
+                      </option>
+                      {technicians.map((t: any) => (
+                        <option key={t.id} value={t.id}>
+                          {t.display_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button type="submit">Reassign</button>
+                </AjaxForm>
+              </ModalTrigger>
+
+              {!ticket.is_escalated && (
+                <ModalTrigger label="Escalate" title="Escalate ticket" buttonClassName="secondary">
+                  <AjaxForm action={submitEscalate} successMessage="Ticket escalated." resetOnSuccess={false}>
+                    <p className="muted">
+                      Raises priority a level and notifies the rest of the assigned team.
+                    </p>
+                    <div className="field">
+                      <label htmlFor="reason">Reason (optional)</label>
+                      <textarea id="reason" name="reason" rows={2} />
+                    </div>
+                    <button type="submit">Escalate</button>
+                  </AjaxForm>
+                </ModalTrigger>
+              )}
+            </div>
+          )}
+        </div>
         <p>
-          <span className="badge">{ticket.status}</span>{" "}
-          <span className="badge">{ticket.priority}</span>
+          <StatusBadge status={ticket.status} /> <PriorityBadge priority={ticket.priority} />
           {ticket.category_name && <span className="badge">{ticket.category_name}</span>}{" "}
           {ticket.due_at &&
             (isOverdue(ticket) ? (
@@ -237,18 +255,50 @@ export default async function TicketDetailPage({
         <p style={{ whiteSpace: "pre-wrap" }}>{ticket.description}</p>
       </div>
 
+      {ticket.approval_status && (isTech || isManager) && (
+        <div className="card">
+          <h2>Approval</h2>
+          {ticket.approval_status === "pending" ? (
+            isManager ? (
+              <>
+                <p className="muted">This request needs your approval before IT can act on it.</p>
+                <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+                  <AjaxForm action={submitApprove} successMessage="Request approved.">
+                    <div className="field">
+                      <textarea name="note" rows={2} placeholder="Note (optional)" />
+                    </div>
+                    <button type="submit">Approve</button>
+                  </AjaxForm>
+                  <AjaxForm action={submitReject} successMessage="Request rejected.">
+                    <div className="field">
+                      <textarea name="note" rows={2} placeholder="Reason (optional)" />
+                    </div>
+                    <ConfirmSubmitButton
+                      className="secondary"
+                      message="Reject this request? The requester and technician will be notified."
+                    >
+                      Reject
+                    </ConfirmSubmitButton>
+                  </AjaxForm>
+                </div>
+              </>
+            ) : (
+              <p className="muted">Waiting on the requester's manager to approve this request.</p>
+            )
+          ) : (
+            <p className="muted">
+              {ticket.approval_status === "approved" ? "Approved" : "Rejected"} by{" "}
+              {ticket.approved_by_name ?? "the manager"} on{" "}
+              {new Date(ticket.approved_at).toLocaleString()}.
+              {ticket.approval_note && ` Note: ${ticket.approval_note}`}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="card">
-        <h2>Conversation</h2>
-        {replies.length === 0 && <p className="muted">No replies yet.</p>}
-        {replies.map((r: any) => (
-          <div key={r.id} className="reply">
-            <div className="reply-meta">
-              <strong>{r.author_name}</strong> &middot;{" "}
-              {new Date(r.created_at).toLocaleString()}
-            </div>
-            <p className="reply-body">{r.body}</p>
-          </div>
-        ))}
+        <h2>Activity</h2>
+        <Timeline entries={timeline} />
 
         <h2>Attachments</h2>
         {attachments.length === 0 && <p className="muted">No attachments.</p>}
@@ -266,8 +316,7 @@ export default async function TicketDetailPage({
         )}
 
         <h2>Reply</h2>
-        {error && <p className="error">{error}</p>}
-        <form action={submitReply}>
+        <AjaxForm action={submitReply} successMessage="Reply sent.">
           <div className="field">
             <textarea name="body" rows={4} placeholder="Write a reply..." />
           </div>
@@ -287,129 +336,21 @@ export default async function TicketDetailPage({
             </select>
           </div>
           <button type="submit">Submit</button>
-        </form>
+        </AjaxForm>
       </div>
 
       {isTech && (
         <div className="card">
-          <h2>Assignment</h2>
-          <p className="muted">
-            Currently assigned to: {ticket.assigned_tech_name ?? "Unassigned"}
-          </p>
-          <form action={submitReassign} style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
-            <div className="field" style={{ maxWidth: 240, marginBottom: 0 }}>
-              <label htmlFor="technician">Reassign to</label>
-              <select id="technician" name="technician" defaultValue={ticket.assigned_tech_id ?? ""}>
-                <option value="" disabled>
-                  Select a technician
-                </option>
-                {technicians.map((t: any) => (
-                  <option key={t.id} value={t.id}>
-                    {t.display_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button type="submit" className="secondary">
-              Reassign
-            </button>
-          </form>
-        </div>
-      )}
-
-      {ticket.approval_status && (isTech || isManager) && (
-        <div className="card">
-          <h2>Approval</h2>
-          {ticket.approval_status === "pending" ? (
-            isManager ? (
-              <>
-                <p className="muted">This request needs your approval before IT can act on it.</p>
-                <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-                  <form action={submitApprove}>
-                    <div className="field">
-                      <textarea name="note" rows={2} placeholder="Note (optional)" />
-                    </div>
-                    <button type="submit">Approve</button>
-                  </form>
-                  <form action={submitReject}>
-                    <div className="field">
-                      <textarea name="note" rows={2} placeholder="Reason (optional)" />
-                    </div>
-                    <ConfirmSubmitButton
-                      className="secondary"
-                      message="Reject this request? The requester and technician will be notified."
-                    >
-                      Reject
-                    </ConfirmSubmitButton>
-                  </form>
-                </div>
-              </>
-            ) : (
-              <p className="muted">Waiting on the requester's manager to approve this request.</p>
-            )
-          ) : (
-            <p className="muted">
-              {ticket.approval_status === "approved" ? "Approved" : "Rejected"} by{" "}
-              {ticket.approved_by_name ?? "the manager"} on{" "}
-              {new Date(ticket.approved_at).toLocaleString()}.
-              {ticket.approval_note && ` Note: ${ticket.approval_note}`}
-            </p>
-          )}
-        </div>
-      )}
-
-      {isTech && (
-        <div className="card">
-          <h2>Escalation</h2>
-          {ticket.is_escalated ? (
-            <p className="muted">
-              Escalated by {ticket.escalated_by_name ?? "a technician"} on{" "}
-              {new Date(ticket.escalated_at).toLocaleString()}.
-              {ticket.escalation_reason && ` Reason: ${ticket.escalation_reason}`}
-            </p>
-          ) : (
-            <>
-              <p className="muted">
-                Raises priority a level and notifies the rest of the assigned team.
-              </p>
-              <form action={submitEscalate}>
-                <div className="field">
-                  <textarea name="reason" rows={2} placeholder="Reason (optional)" />
-                </div>
-                <ConfirmSubmitButton
-                  className="secondary"
-                  message="Escalate this ticket? This raises its priority and notifies the rest of the team."
-                >
-                  Escalate
-                </ConfirmSubmitButton>
-              </form>
-            </>
-          )}
-        </div>
-      )}
-
-      {isTech && (
-        <div className="card">
-          <h2>Internal Notes</h2>
-          <p className="muted">Visible to technicians only — never shown to the requester.</p>
-          {notes.length === 0 && <p className="muted">No notes yet.</p>}
-          {notes.map((n: any) => (
-            <div key={n.id} className="note">
-              <div className="reply-meta">
-                <strong>{n.author_name}</strong> &middot;{" "}
-                {new Date(n.created_at).toLocaleString()}
-              </div>
-              <p className="reply-body">{n.body}</p>
-            </div>
-          ))}
-          <form action={submitNote} style={{ marginTop: 12 }}>
+          <h2>Add internal note</h2>
+          <p className="muted">Visible to technicians only — already included in the timeline above.</p>
+          <AjaxForm action={submitNote} successMessage="Note added.">
             <div className="field">
               <textarea name="note" rows={3} placeholder="Add an internal note..." />
             </div>
             <button type="submit" className="secondary">
               Add note
             </button>
-          </form>
+          </AjaxForm>
         </div>
       )}
     </main>

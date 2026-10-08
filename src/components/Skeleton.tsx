@@ -10,12 +10,15 @@ export function SkeletonBar({
   return <div className="skeleton" style={{ width, height, marginBottom: 8, ...style }} />;
 }
 
+// Mirrors the real sidebar's shape (see .sidebar in globals.css) so the
+// loading state doesn't cause a layout jump when the real <Nav> swaps in.
 export function SkeletonNav() {
   return (
-    <div className="nav" style={{ gap: 16 }}>
-      <SkeletonBar width={90} height={14} style={{ marginBottom: 0 }} />
-      <SkeletonBar width={110} height={14} style={{ marginBottom: 0 }} />
-      <SkeletonBar width={80} height={14} style={{ marginBottom: 0 }} />
+    <div className="sidebar">
+      <SkeletonBar width={100} height={16} style={{ marginBottom: 20 }} />
+      {Array.from({ length: 4 }).map((_, i) => (
+        <SkeletonBar key={i} height={13} style={{ marginBottom: 12 }} />
+      ))}
     </div>
   );
 }

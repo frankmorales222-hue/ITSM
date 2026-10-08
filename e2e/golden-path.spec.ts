@@ -1,6 +1,5 @@
 import path from "path";
 import { test, expect } from "@playwright/test";
-import { E2E_USER_EMAIL, E2E_USER_PASSWORD } from "./global-setup";
 
 // One end-to-end walk through the actual product loop, driven through a
 // real browser against a running server — this is what the route-handler
@@ -8,15 +7,14 @@ import { E2E_USER_EMAIL, E2E_USER_PASSWORD } from "./global-setup";
 // redirect() behavior, and real HTML form submission (including an
 // actual file upload, which the in-app browser tool used earlier in this
 // project's history couldn't drive — Playwright's setInputFiles can).
-test("login, file a ticket, reply with an attachment, resolve it, see it in the technician queue, log out", async ({
+// Runs pre-authenticated via the "chromium" project's storageState — see
+// auth.setup.ts for why every authenticated spec shares one login instead
+// of each submitting the form itself.
+test("file a ticket, reply with an attachment, resolve it, see it in the technician queue, log out", async ({
   page,
 }) => {
-  await test.step("log in", async () => {
-    await page.goto("/login");
-    await page.getByLabel("Email").fill(E2E_USER_EMAIL);
-    await page.getByLabel("Password").fill(E2E_USER_PASSWORD);
-    await page.getByRole("button", { name: "Log in" }).click();
-    await expect(page).toHaveURL(/\/tickets$/);
+  await test.step("start on My Requests", async () => {
+    await page.goto("/tickets");
     await expect(page.getByRole("heading", { name: "My Requests" })).toBeVisible();
   });
 
@@ -41,7 +39,7 @@ test("login, file a ticket, reply with an attachment, resolve it, see it in the 
     // the row's badge, not just text on the page — both words also
     // appear as options in the status filter dropdown. Columns are
     // Number, Subject, Category, Status, Priority, Due, Created.
-    await expect(row.locator("span.badge")).toHaveText("assigned");
+    await expect(row.locator('span[class*="status-"]')).toHaveText("assigned");
     await expect(row.getByRole("cell").nth(4)).toHaveText("critical");
   });
 
@@ -60,7 +58,7 @@ test("login, file a ticket, reply with an attachment, resolve it, see it in the 
     await expect(page.getByText("Reseated the battery, it powered on.")).toBeVisible();
     // Scoped to the badge, not just text on the page — "resolved" is
     // also an <option> in the status-change <select> right below it.
-    await expect(page.locator("span.badge").first()).toHaveText("resolved");
+    await expect(page.locator('span[class*="status-"]').first()).toHaveText("resolved");
     await expect(page.getByRole("link", { name: "test-attachment.txt" })).toBeVisible();
   });
 

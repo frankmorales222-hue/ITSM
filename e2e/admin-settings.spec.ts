@@ -1,19 +1,13 @@
 import { test, expect } from "@playwright/test";
-import { E2E_USER_EMAIL, E2E_USER_PASSWORD } from "./global-setup";
 
-// One test with steps, reusing a single login, rather than separate tests
-// per card — the login rate limit (5 attempts/60s per IP) is shared across
-// every spec file that logs in, and this file previously logged in fresh
-// per test, which added up across the suite.
+// One test with steps rather than separate tests per card. Runs
+// pre-authenticated via storageState (see auth.setup.ts) instead of
+// logging in itself, since the login rate limit (5 attempts/60s per IP)
+// is shared across every spec file.
 test("admin settings: save/clear Azure AD and IMAP, with confirm-dialog handling on Clear", async ({
   page,
 }) => {
-  await test.step("log in", async () => {
-    await page.goto("/login");
-    await page.getByLabel("Email").fill(E2E_USER_EMAIL);
-    await page.getByLabel("Password").fill(E2E_USER_PASSWORD);
-    await page.getByRole("button", { name: "Log in" }).click();
-    await expect(page).toHaveURL(/\/tickets$/);
+  await test.step("go to admin", async () => {
     await page.goto("/admin");
   });
 

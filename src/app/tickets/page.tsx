@@ -3,6 +3,9 @@ import { getSessionUserId } from "@/lib/auth";
 import { pool } from "@/lib/db";
 import { isOverdue } from "@/lib/sla";
 import Nav from "@/components/Nav";
+import { StatusBadge, PriorityBadge } from "@/components/StatusBadge";
+import SavedViews from "@/components/SavedViews";
+import { createSavedView, getSavedViews, deleteSavedView } from "@/lib/saved-views";
 import {
   STATUSES,
   buildTicketWhere,
@@ -50,18 +53,61 @@ export default async function TicketsPage({
   const { status, category, q, page: pageParam } = await searchParams;
   const filters: TicketFilters = { status, category, q };
   const page = Math.max(1, Number(pageParam) || 1);
-  const [{ tickets, total }, categories] = await Promise.all([
+  const [{ tickets, total }, categories, savedViews] = await Promise.all([
     getTickets(userId, filters, page),
     getActiveCategories(),
+    getSavedViews(userId, "tickets"),
   ]);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const query = buildFilterQueryString(filters);
+
+  async function submitSaveView(formData: FormData) {
+    "use server";
+    const actorId = await getSessionUserId();
+    if (!actorId) {
+      redirect("/login");
+    }
+    const name = String(formData.get("name") ?? "").trim();
+    if (!name) {
+      return { error: "Name the view first." };
+    }
+    await createSavedView({
+      userId: actorId,
+      page: "tickets",
+      name,
+      filters: {
+        status: (formData.get("status") as string) || undefined,
+        category: (formData.get("category") as string) || undefined,
+        q: (formData.get("q") as string) || undefined,
+      },
+    });
+  }
+
+  async function submitDeleteView(formData: FormData) {
+    "use server";
+    const actorId = await getSessionUserId();
+    if (!actorId) {
+      redirect("/login");
+    }
+    const viewId = String(formData.get("viewId") ?? "");
+    if (viewId) {
+      await deleteSavedView(viewId, actorId);
+    }
+  }
 
   return (
     <main>
       <Nav userId={userId} />
 
       <h1>My Requests</h1>
+
+      <SavedViews
+        views={savedViews}
+        currentFilters={filters}
+        basePath="/tickets"
+        onSave={submitSaveView}
+        onDelete={submitDeleteView}
+      />
 
       <form method="GET" style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
         <div className="field" style={{ maxWidth: 240, marginBottom: 0 }}>
@@ -132,9 +178,11 @@ export default async function TicketsPage({
                 </td>
                 <td className="muted">{t.category_name ?? "—"}</td>
                 <td>
-                  <span className="badge">{t.status}</span>
+                  <StatusBadge status={t.status} />
                 </td>
-                <td>{t.priority}</td>
+                <td>
+                  <PriorityBadge priority={t.priority} />
+                </td>
                 <td>
                   {t.due_at ? (
                     isOverdue(t) ? (

@@ -9,7 +9,7 @@ export async function resetTestDb() {
     TRUNCATE
       ticket_notifications, inbound_email_log, ticket_status_history,
       ticket_attachments, ticket_notes, ticket_replies, tickets,
-      assignment_state, team_members, teams, kb_articles, users, admin_settings
+      assignment_state, team_members, teams, kb_articles, saved_views, users, admin_settings
     RESTART IDENTITY CASCADE
   `);
 }

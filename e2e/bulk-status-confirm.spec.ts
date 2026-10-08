@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import { E2E_USER_EMAIL, E2E_USER_PASSWORD } from "./global-setup";
 
 // The bulk status control on /technician asks for confirmation client-side
 // (ConfirmBulkStatusButton) before submitting, since it's a Server Action
@@ -7,19 +6,13 @@ import { E2E_USER_EMAIL, E2E_USER_PASSWORD } from "./global-setup";
 // dialog via Playwright's dialog handling, not just the underlying
 // bulkUpdateStatus DB logic (already covered by tickets.integration.test.ts).
 //
-// One test with steps, reusing a single login, rather than three separate
-// tests — this file and golden-path.spec.ts share a login rate limit
-// (5 attempts/60s per IP), and three fresh logins here was enough to trip
-// it when the whole suite ran together.
+// One test with steps rather than several separate tests, and runs
+// pre-authenticated via storageState (see auth.setup.ts) rather than
+// logging in itself — both in service of the same thing: minimizing how
+// many times this suite hits the shared login rate limit.
 test("bulk status confirmation: accept, dismiss, and no-selection", async ({ page }) => {
-  await test.step("log in and create a ticket", async () => {
-    await page.goto("/login");
-    await page.getByLabel("Email").fill(E2E_USER_EMAIL);
-    await page.getByLabel("Password").fill(E2E_USER_PASSWORD);
-    await page.getByRole("button", { name: "Log in" }).click();
-    await expect(page).toHaveURL(/\/tickets$/);
-
-    await page.getByRole("link", { name: "Report a problem" }).click();
+  await test.step("create a ticket", async () => {
+    await page.goto("/tickets/new");
     await page.getByLabel("Subject").fill("Bulk confirm dialog test");
     await page.getByLabel("Description").fill("Used to exercise the bulk status confirm dialog.");
     await page.getByRole("button", { name: "Submit" }).click();
@@ -40,7 +33,7 @@ test("bulk status confirmation: accept, dismiss, and no-selection", async ({ pag
 
     // No navigation happened — dismissing prevented the form submit.
     await expect(page).toHaveURL(/\/technician(\?|$)/);
-    await expect(row.locator("span.badge")).toHaveText("assigned");
+    await expect(row.locator('span[class*="status-"]')).toHaveText("assigned");
   });
 
   await test.step("accepting the confirmation applies the bulk status change", async () => {
@@ -55,7 +48,7 @@ test("bulk status confirmation: accept, dismiss, and no-selection", async ({ pag
     await page.getByRole("button", { name: "Apply to selected" }).click();
 
     await expect(page).toHaveURL(/\/technician(\?|$)/);
-    await expect(row.locator("span.badge")).toHaveText("on_hold");
+    await expect(row.locator('span[class*="status-"]')).toHaveText("on hold");
   });
 
   await test.step("submitting with nothing selected shows an alert, not a confirm dialog", async () => {
@@ -70,6 +63,6 @@ test("bulk status confirmation: accept, dismiss, and no-selection", async ({ pag
     expect(alertMessage).toContain("Select at least one ticket");
     await expect(page).toHaveURL(/\/technician/);
     // Still on_hold from the previous step — the alert path never submitted.
-    await expect(row.locator("span.badge")).toHaveText("on_hold");
+    await expect(row.locator('span[class*="status-"]')).toHaveText("on hold");
   });
 });

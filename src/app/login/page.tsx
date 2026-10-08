@@ -59,7 +59,7 @@ async function login(formData: FormData) {
     path: "/",
   });
 
-  redirect("/tickets");
+  redirect("/dashboard");
 }
 
 export default async function LoginPage({
